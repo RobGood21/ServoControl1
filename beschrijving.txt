@@ -1,2 +1,15 @@
 dit is de beschrijving
-dirt is een aanpassing
+
+
+SER_reg
+bit0 servo is running, or request for running
+bit1
+bit2
+bit3
+bit4
+bit5
+bit6
+bit7
+
+GPIOR0
+bit0= Servo run or interval

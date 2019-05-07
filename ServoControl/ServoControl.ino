@@ -3,6 +3,7 @@
  Created:	4/30/2019 3:59:50 PM
  Author:	gebruiker
 */
+//declarations common
 
 
 //Declaraties deKoder
@@ -27,24 +28,51 @@ byte SH_bitcount;
 byte SH_bytecount;
 byte SH_fase;
 
+//declarations servo
+byte servo; //adresses current handled servo in SER_exe
+byte SER_l[8]; //puls width left x10 in us
+byte SER_r[8]; //puls width right
+byte SER_speed[8];//motion speed of servo
+byte SER_reg[8]; //register byte
+unsigned long SER_time; //timer for pulswidth
+unsigned int SER_goal[8]; //goal, position to reach
+unsigned long SER_freq; //timer for 50hz servo pulse
 unsigned long CLK_time;
+//declaration for testing can be removed (later)
+volatile unsigned long tijdmeting;
+volatile unsigned long gemeten;
+
 void setup() {
-	DDRD |= (1 << 7); //pin7 OE (output enabled) van de shifts
-	Serial.begin(9600);
-	//shiftregisters init
-	DDRD |= (1 << 4); //pin4 serial data out, set as output
-	DDRD |= (1 << 5); //pin5 Rclock, latch set as output
-	DDRD |= (1 << 6); //pin6 shift clock set as output
+	//Serial.begin(9600);
+	//shiftregisters init	
+	DDRB |= (1 << 0); //pin 8 serial data out, set as output
+	DDRB |= (1 << 1); //pin 9 Rclock, latch set as output
+	DDRB |= (1 << 2); //pin 10 shift clock set as output	
+	DDRB |= (1 << 3); //pin 11 OE (output enabled) van de shifts
 
-	//PORTD |= (1 << 7); //set disable output	
+					  //DeKoder part, interrupt on PIN2
+	//DDRD &= ~(1 << 2);//bitClear(DDRD, 2); //pin2 input
+	//DDRD |= (1 << 2);
 
-		//DeKoder part, interrupt on PIN2
-	DDRD &= ~(1 << 2);//bitClear(DDRD, 2); //pin2 input
 	DEK_Tperiode = micros();
 	EICRA |= (1 << 0);//EICRA – External Interrupt Control Register A bit0 > 1 en bit1 > 0 (any change)
 	EICRA &= ~(1 << 1);	//bitClear(EICRA, 1);
 	EIMSK |= (1 << INT0);//bitSet(EIMSK, INT0);//EIMSK – External Interrupt Mask Register bit0 INT0 > 1
 
+	 //timer interupt tbv servo control
+	TCCR1A = 0;
+	//TCCR2B = 5; // |= (1 << 0); //set clock no prescaler 128
+	//125 counter=1ms  250 counter=2ms 187 counter =1,5ms centre
+	//TCNT2 – Timer / Counter Register
+	//OCR2A = 187; // – Output Compare Register A
+	//TIMSK2   Bit 1 – OCIE2A : Timer / Counter2 Output Compare Match A Interrupt Enable
+	TIMSK1 |= (1 << 1); //enable interupt
+	//servo part init
+	//servo = 0;
+	//test instellingen kan later eruit...
+
+	DDRB |= (1 << 4); //pin 4 as output temp led control of interrupt timer 2
+	SER_reg[1] |= (1 << 0); //start servo 2
 }
 ISR(INT0_vect) { //syntax voor een ISR
 //isr van PIN2
@@ -54,7 +82,6 @@ ISR(INT0_vect) { //syntax voor een ISR
 	//bit2=falsepart
 	//bit3= received bit true =true false =false
 	//bit4=restart, begin, failed as true
-
 	cli();
 	DEK_duur = (micros() - DEK_Tperiode);
 	DEK_Tperiode = micros();
@@ -67,7 +94,6 @@ ISR(INT0_vect) { //syntax voor een ISR
 				DEK_Reg |= (1 << 1);
 			}
 			else { //received full true bit
-
 				DEK_Reg |= (1 << 3);
 				DEK_BitRX();
 				DEK_Reg &= ~(1 << 2);//bitClear(DekReg, 2);
@@ -94,6 +120,16 @@ ISR(INT0_vect) { //syntax voor een ISR
 		}
 	}
 	sei();
+}
+ISR(TIMER1_COMPA_vect) {
+	//cli();
+	//EIMSK &= ~(1 << INT0);
+	//SREG &= ~(1 << 7);
+	SER_stop();
+	//EIMSK |= (1 << INT0);
+	SER_run();
+
+
 }
 void DEK_begin() {//runs when bit is corrupted, or command not correct
 	//lesscount++;
@@ -387,70 +423,120 @@ void APP_Monitor(boolean type, int adres, int decoder, int channel, boolean port
 }
 void APP_function(boolean type, int adres, int decoder, int channel, boolean port, boolean onoff, int cv, int value) {
 	//executes DCC commands called from COM_exe
+	static byte temp;
+
+
+	if ((temp ^ (adres + port)) > 0) {
+		if (adres == 9) {
+			if (port == true) {
+
+				//tijdmeting = micros();
+
+				//TCNT2 = 0; //reset counter
+				//TIMSK2 |= (1 << 1); //enable interupts
+				//PORTB |= (1 << 4);
+			}
+			else {
+				//Serial.println(gemeten);
+				//TIMSK2 &= ~(1 << 1); //disable interupts
+				//PORTB &= ~(1 << 4);
+			}
+		}
+	}
+
+
 	if (type == false) { //switch command
 		if (adres > 0 & adres < 9) {
 			adres--;
 			if (port == true) {
-				SH_byte[0] |= (1 << adres);
+				SER_reg[adres] |= (1 << 0);
+				//SH_byte[0] |= (1 << adres);
 			}
 			else {
-				SH_byte[0] &= ~(1 << adres);
+				SER_reg[adres] &= ~(1 << 0);
+				//SH_byte[0] |= (1 << adres);
+
+				//SH_byte[0] &= ~(1 << adres);
 			}
+			SHIFT();
 		}
+
 	}
 	else { //CV command
 
 	}
+	temp = adres + port;
 }
 
-void SHIFT() {
-	//Serial.println(SH_fase);
-	switch (SH_fase) {
-	case 0: //start shift process
-		PORTD &= ~(1 << 5); //store 
-		PORTD &= ~(1 << 6); //shift
-		SH_fase = 1;
-		break;
-	case 1:
-		//load bit
-		if (bitRead(SH_byte[SH_bytecount], SH_bitcount) == true) {
-			PORTD |= (1 << 4);
+void SER_stop() { //called from ISR//
+	SH_byte[0] &= ~(1 << servo); //reset puls servo
+	TCCR1B = 0; //stop timer 2
+	SHIFT();
+	//if (micros() - tijdmeting > 1560) Serial.println(micros() - tijdmeting);
+}
+void SER_run() {
+	GPIOR0 ^= (1 << 0);
+	TCNT1 = 0;
+	if (bitRead(GPIOR0, 0) == true) { //test start servo
+		servo++;
+		if (servo > 7) servo = 0;
+		if (bitRead(SER_reg[servo], 0) == true) {
+			SH_byte[0] |= (1 << servo); //set servo puls	
+			SHIFT();
 		}
-		else {
-			PORTD &= ~(1 << 4);  //ser data	
-		}
-		SH_fase = 2;
-		break;
-	case 2:
-		//shift high
-		PORTD |= (1 << 6);
-		SH_fase = 3;
-		break;
-	case 3:
-		//shift low, load next bit
-		SH_fase = 1;
-		PORTD &= ~(1 << 6); //shift low
-		SH_bitcount--;
-		if (SH_bitcount > 7) {
-			SH_bitcount = 7;
-			SH_bytecount--;
-			if (SH_bytecount > 1) {
-				SH_bytecount = 1;  //aantal bytes is hier aan te passen.1=2 2=3 enz
-				SH_fase = 4;
-			}
-		}
-		break;
-	case 4:
-		//lock in shift registers to output
-		PORTD |= (1 << 5);
-		SH_fase = 0; //restart
-		break;
+		OCR1A = 24000; // – Output Compare Register A
+		TCCR1B = 1; // |= (1 << 0); //set clock no prescaler		
+	} 
+	else { //pauze interval between servo controlpulses
+		OCR1A = 0xFFFA;
+		TCCR1B = 2;
 	}
+	//tijdmeting = micros();	
+}
+void SHIFT() { //new much faster version
+
+	//EIMSK &= ~(1 << INT0);
+	for (byte b = 1; b < 2;) {
+		for (byte i = 7; i < 8;) {
+			if (bitRead(SH_byte[b], i) == true) {
+				PORTB |= (1 << 0); //set pin 8
+			}
+			else {
+				PORTB &= ~(1 << 0);
+			}
+			PORTB |= (1 << 1);
+			PORTB &= ~(1 << 1);
+			i--;
+		}
+		b--;
+	}
+	PORTB |= (1 << 2);
+	PORTB &= ~(1 << 2);
+	//EIMSK |= (1 << INT0); //INT0
 }
 void CLK_exe() {//called from loop
+
 	//Serial.println(SH_byte[0] + SH_byte[1]);	
 
+	/*
 
+
+	//servotesten met servo 0
+	//SER_reg[0] |= (1 << 0);
+	SER_reg[0] ^= (1 << 7); //toggle richting
+
+	if (bitRead(SER_reg[0], 7) == true) {
+		SER_goal[0] = 1500;
+	}
+	else {
+		SER_goal[0] = 1501;
+	}
+*/
+
+
+/*
+
+//looplicht
 	if (bitRead(SH_byte[0], 7) == true) {
 		SH_byte[0] = 0;
 		SH_byte[1] = 1;
@@ -464,16 +550,44 @@ void CLK_exe() {//called from loop
 		}
 	}
 	if (SH_byte[0] + SH_byte[1] == 0) 	SH_byte[0] = 1;
-}
 
-// the loop function runs over and over again until power down or reset
+*/
+
+/*
+//timer 2 testen
+SER_reg[0] ^=(1 << 6);
+if (bitRead(SER_reg[0], 6) == true) {
+	TCNT2 = 0;
+	TCCR2B = 7;
+	PORTB |= (1 << 4);
+	//TIMSK2 &= ~(1 << 1); //disable interupts
+}
+else {
+	TCCR2B = 0;
+}
+*/
+
+}
 void loop() {
 	DEK_DCCh();
-	SHIFT();
+
+	/*
+
+		if (millis() - SER_freq > 2) { //10*8=80ms = 11,3hz
+			SER_freq = millis();
+			SER_run();
+		}
+		else {
+
+		}
+
+	*/
+	/*
 
 	//slowtimer
 	if (millis() - CLK_time > 500) {
 		//CLK_exe();
 		CLK_time = millis();
 	}
+	*/
 }
