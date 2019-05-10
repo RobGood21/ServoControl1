@@ -2,9 +2,9 @@ dit is de beschrijving
 
 
 SER_reg
-bit0 servo is running, or request for running
-bit1
-bit2
+bit0 servo is running.
+bit1 request for run
+bit2 request direction, L=true R=false
 bit3
 bit4
 bit5
@@ -13,3 +13,4 @@ bit7
 
 GPIOR0
 bit0= Servo run or interval
+bit1= disable shiftregisters during DCC interupt true=disable

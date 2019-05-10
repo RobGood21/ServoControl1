@@ -1,7 +1,13 @@
 /*
  Name:		ServoControl.ino
  Created:	4/30/2019 3:59:50 PM
- Author:	gebruiker
+ Author:	Rob Antonisse
+
+ gebruikte deKOder heeft verschillende aanpassingen
+ minder buffers
+
+
+
 */
 //declarations common
 
@@ -14,13 +20,13 @@ byte DEK_Reg; //register voor de decoder
 byte DEK_Status = 0;
 byte DEK_byteRX[6]; //max length commandoos for this decoder 6 bytes (5x data 1x error check)
 byte DEK_countPA = 0; //counter for preample
-byte DEK_BufReg[12]; //registerbyte for 12 command buffers //bit7= free (false) bit0= CV(true)
-byte DEK_Buf0[12];
-byte DEK_Buf1[12];
-byte DEK_Buf2[12];
-byte DEK_Buf3[12];
-byte DEK_Buf4[12];
-byte DEK_Buf5[12];
+byte DEK_BufReg[6]; //registerbyte for 12 command buffers //bit7= free (false) bit0= CV(true)
+byte DEK_Buf0[6];
+byte DEK_Buf1[6];
+byte DEK_Buf2[6];
+byte DEK_Buf3[6];
+byte DEK_Buf4[6];
+byte DEK_Buf5[6];
 
 //declarations shiftregisters
 byte SH_byte[2]; //2 bytes to be shifted out
@@ -30,13 +36,18 @@ byte SH_fase;
 
 //declarations servo
 byte servo; //adresses current handled servo in SER_exe
-byte SER_l[8]; //puls width left x10 in us
-byte SER_r[8]; //puls width right
-byte SER_speed[8];//motion speed of servo
+unsigned int SER_l[8]; //puls width left x10 in us   16000 = minimum?
+unsigned int SER_r[8]; //puls width right 32000=maximum? 24000 = centre?
+unsigned int SER_position[8]; //current position
+//unsigned int SER_goal[8]; //goal, position to reach
+byte SER_count[8];
+
+
+unsigned int SER_speed[8];//motion speed of servo
 byte SER_reg[8]; //register byte
-unsigned long SER_time; //timer for pulswidth
-unsigned int SER_goal[8]; //goal, position to reach
-unsigned long SER_freq; //timer for 50hz servo pulse
+
+byte COM_maxservo = 3;
+unsigned int COM_dccadres = 1; //basic adres DCC receive
 unsigned long CLK_time;
 //declaration for testing can be removed (later)
 volatile unsigned long tijdmeting;
@@ -72,7 +83,12 @@ void setup() {
 	//test instellingen kan later eruit...
 
 	DDRB |= (1 << 4); //pin 4 as output temp led control of interrupt timer 2
-	SER_reg[1] |= (1 << 0); //start servo 2
+	//SER_reg[1] |= (1 << 0); //start servo 2
+
+	//temp
+	SER_init();
+
+
 }
 ISR(INT0_vect) { //syntax voor een ISR
 //isr van PIN2
@@ -85,8 +101,8 @@ ISR(INT0_vect) { //syntax voor een ISR
 	cli();
 	DEK_duur = (micros() - DEK_Tperiode);
 	DEK_Tperiode = micros();
-	if (DEK_duur > 50) {
-		if (DEK_duur < 62) {
+	if (DEK_duur > 50) {//50  ****************
+		if (DEK_duur < 62) { //62 **************
 			DEK_Reg |= (1 << 0); //bitSet(DekReg, 0);
 
 			if (bitRead(DEK_Reg, 1) == false) {
@@ -101,9 +117,9 @@ ISR(INT0_vect) { //syntax voor een ISR
 			}
 		}
 		else {
-			if (DEK_duur > 106) {
+			if (DEK_duur > 106) { //106 ***********************
 
-				if (DEK_duur < 124) { //preferred 118 6us extra space in false bit
+				if (DEK_duur < 124) { //124 ***********preferred 118 6us extra space in false bit
 					DEK_Reg |= (1 << 0); //bitSet(DekReg, 0);
 					if (bitRead(DEK_Reg, 2) == false) {
 						DEK_Reg &= ~(1 << 1); //bitClear(DekReg, 1);
@@ -122,14 +138,7 @@ ISR(INT0_vect) { //syntax voor een ISR
 	sei();
 }
 ISR(TIMER1_COMPA_vect) {
-	//cli();
-	//EIMSK &= ~(1 << INT0);
-	//SREG &= ~(1 << 7);
 	SER_stop();
-	//EIMSK |= (1 << INT0);
-	SER_run();
-
-
 }
 void DEK_begin() {//runs when bit is corrupted, or command not correct
 	//lesscount++;
@@ -142,7 +151,7 @@ void DEK_begin() {//runs when bit is corrupted, or command not correct
 }
 void DEK_BufCom(boolean CV) { //create command in Buffer
 	byte i = 0;
-	while (i < 12) {
+	while (i < 6) {
 
 		if (bitRead(DEK_BufReg[i], 7) == false) {
 			DEK_BufReg[i] = 0; //clear found buffer
@@ -174,6 +183,9 @@ void DEK_BitRX() { //new version
 	static byte countbit = 0; //counter received bits
 	static byte countbyte = 0;
 	static byte n = 0;
+
+	static byte check;
+
 	DEK_Reg |= (1 << 4);//resets and starts process if not reset in this void
 	switch (DEK_Status) {
 		//*****************************
@@ -218,13 +230,20 @@ void DEK_BitRX() { //new version
 			switch (countbyte) {
 			case 3: //Basic Accessory Decoder Packet received
 				//check error byte
-				if (DEK_byteRX[2] = DEK_byteRX[0] ^ DEK_byteRX[1])DEK_BufCom(false);
+				if (DEK_byteRX[2] == (DEK_byteRX[0] ^ DEK_byteRX[1])) {
+					//aanpassingen mei 2019 voor filter eenzelfde commandoos
+					if (check != DEK_byteRX[2])DEK_BufCom(false);
+					check = DEK_byteRX[2];
+					//Serial.println(check);
+				}
+
 				break; //6
 			case 6: ///Accessory decoder configuration variable Access Instruction received (CV)
 				//in case of CV, handle only write command
 				if (bitRead(DEK_byteRX[2], 3) == true && (bitRead(DEK_byteRX[2], 2) == true)) {
 					//check errorbyte and make command
-					if (DEK_byteRX[5] = DEK_byteRX[0] ^ DEK_byteRX[1] ^ DEK_byteRX[2] ^ DEK_byteRX[3] ^ DEK_byteRX[4])DEK_BufCom(true);
+					if (DEK_byteRX[5] == DEK_byteRX[0] ^ DEK_byteRX[1] ^ DEK_byteRX[2] ^ DEK_byteRX[3] ^ DEK_byteRX[4])DEK_BufCom(true);
+					//}
 				}
 				break;
 			} //close switch bytecount
@@ -271,8 +290,6 @@ void DEK_DCCh() { //handles incoming DCC commands, called from loop()
 			value = 0;
 		}
 		COM_exe(bitRead(DEK_BufReg[n], 0), decoder, channel, port, onoff, cv, value);
-
-
 		//Show Monitor (bytes)
 		if (DEK_Monitor == true) {
 			Serial.print("buffer= ");
@@ -367,7 +384,7 @@ void DEK_DCCh() { //handles incoming DCC commands, called from loop()
 		DEK_Buf5[n] = 0;
 	}
 	n++;
-	if (n > 12)n = 0;
+	if (n > 5)n = 0;
 }
 void COM_exe(boolean type, int decoder, int channel, boolean port, boolean onoff, int cv, int value) {
 	//type=CV(true) or switch(false)
@@ -380,7 +397,7 @@ void COM_exe(boolean type, int decoder, int channel, boolean port, boolean onoff
 	int adres;
 	adres = ((decoder - 1) * 4) + channel;
 	//Applications 
-	//APP_Monitor(type, adres, decoder, channel, port, onoff, cv, value);
+	APP_Monitor(type, adres, decoder, channel, port, onoff, cv, value);
 	APP_function(type, adres, decoder, channel, port, onoff, cv, value);
 }
 void APP_Monitor(boolean type, int adres, int decoder, int channel, boolean port, boolean onoff, int cv, int value) {
@@ -422,88 +439,126 @@ void APP_Monitor(boolean type, int adres, int decoder, int channel, boolean port
 	Serial.println("");
 }
 void APP_function(boolean type, int adres, int decoder, int channel, boolean port, boolean onoff, int cv, int value) {
-	//executes DCC commands called from COM_exe
-	static byte temp;
-
-
-	if ((temp ^ (adres + port)) > 0) {
-		if (adres == 9) {
-			if (port == true) {
-
-				//tijdmeting = micros();
-
-				//TCNT2 = 0; //reset counter
-				//TIMSK2 |= (1 << 1); //enable interupts
-				//PORTB |= (1 << 4);
-			}
-			else {
-				//Serial.println(gemeten);
-				//TIMSK2 &= ~(1 << 1); //disable interupts
-				//PORTB &= ~(1 << 4);
-			}
+	byte dcc;
+	//voor hoge dcc adressen gaat dit denk ik  niet goed later nog en naar kijken
+	dcc = adres - COM_dccadres;
+	//Serial.println(dcc);
+	if (dcc < 8) { //0~7
+		if (type == false) { //switch command
+			SER_start(dcc, port);
+		}
+		else { //CV command
 		}
 	}
-
-
-	if (type == false) { //switch command
-		if (adres > 0 & adres < 9) {
-			adres--;
-			if (port == true) {
-				SER_reg[adres] |= (1 << 0);
-				//SH_byte[0] |= (1 << adres);
-			}
-			else {
-				SER_reg[adres] &= ~(1 << 0);
-				//SH_byte[0] |= (1 << adres);
-
-				//SH_byte[0] &= ~(1 << adres);
-			}
-			SHIFT();
-		}
-
-	}
-	else { //CV command
-
-	}
-	temp = adres + port;
 }
-
+void SER_init() {
+	//runs ones called from setup
+	for (byte i = 0; i < 8; i++) {
+		SER_l[i] = 18000; //left positio
+		SER_r[i] = 30000; //right position
+		SER_position[i] = 24000; //current position, initial start
+		SER_speed[i] = 800; // 500;
+	}
+}
+void SER_start(byte srv, boolean direction) {
+	if (bitRead(SER_reg[srv], 0) == false) { //servo not running
+		SER_reg[srv] |= (1 << 1); //set request for start
+	}
+	if (direction == true) {
+		SER_reg[srv] |= (1 << 2);
+	}
+	else {
+		SER_reg[srv] &= ~(1 << 2);
+	}
+}
 void SER_stop() { //called from ISR//
+	PINB |= (1 << 4);
 	SH_byte[0] &= ~(1 << servo); //reset puls servo
 	TCCR1B = 0; //stop timer 2
 	SHIFT();
-	//if (micros() - tijdmeting > 1560) Serial.println(micros() - tijdmeting);
+	SER_run();
 }
 void SER_run() {
+	byte count;
+	byte temp;
 	GPIOR0 ^= (1 << 0);
 	TCNT1 = 0;
-	if (bitRead(GPIOR0, 0) == true) { //test start servo
+	if (bitRead(GPIOR0, 0) == true) { //test start servo	
 		servo++;
 		if (servo > 7) servo = 0;
+
+		SH_byte[0] &= ~(1 << servo); //clear bit
 		if (bitRead(SER_reg[servo], 0) == true) {
 			SH_byte[0] |= (1 << servo); //set servo puls	
 			SHIFT();
 		}
-		OCR1A = 24000; // – Output Compare Register A
-		TCCR1B = 1; // |= (1 << 0); //set clock no prescaler		
-	} 
-	else { //pauze interval between servo controlpulses
-		OCR1A = 0xFFFA;
-		TCCR1B = 2;
-	}
-	//tijdmeting = micros();	
-}
-void SHIFT() { //new much faster version
+		OCR1A = SER_position[servo]; // – set new step position in Output Compare Register A
+		TCCR1B = 1; // |= (1 << 0); //set clock no prescaler	
 
-	//EIMSK &= ~(1 << INT0);
-	for (byte b = 1; b < 2;) {
-		for (byte i = 7; i < 8;) {
-			if (bitRead(SH_byte[b], i) == true) {
-				PORTB |= (1 << 0); //set pin 8
+		//uit ser_set gaat sneller, kan straks hier nu ff nog niet
+		//Servo not active check 
+		//SER_set();
+
+	}
+	else { //pauze interval between servo controlpulses
+		SER_set(); //stond eerst hierboven
+		OCR1A = 20000; //12000 too fast makes dcc receive crash
+		TCCR1B = 2; //gives period of 6ms			
+	}
+}
+void SER_set() { //called from SER_run 	
+
+	//deze servo klaarzetten voor volgende puls, wordt uitgvoerd nadat de eventuele puls is verstuurd, of deze servo is gepasseerd.
+	//dus wat hier wordt gedaan komt de volgende keer dat deze servo wordt bekeken. na ongeveer een 20ms
+	if (bitRead(SER_reg[servo], 0) == true) { //servo runs
+		switch (bitRead(SER_reg[servo], 2)) {
+		case false:
+			if (SER_position[servo] == SER_l[servo]) {
+				SER_count[servo]++;
+				if (SER_count[servo] > 4) {
+					SER_reg[servo] &= ~(1 << 0); //stop servo
+					SER_count[servo] = 0;
+				}
 			}
 			else {
-				PORTB &= ~(1 << 0);
+				SER_position[servo] = SER_position[servo] - SER_speed[servo]; //set new position
+				if (SER_position[servo] < SER_l[servo]) { //postion reached
+					SER_position[servo] = SER_l[servo];
+				}
 			}
+			break;
+
+		case true:
+			if (SER_position[servo] == SER_r[servo]) {
+				SER_count[servo]++;
+				if (SER_count[servo] > 4) {
+					SER_reg[servo] &= ~(1 << 0); //stop servo
+					SER_count[servo] = 0;
+				}
+
+			}
+			else {
+				SER_position[servo] = SER_position[servo] + SER_speed[servo]; //set new position
+				if (SER_position[servo] > SER_r[servo]) { //postion reached
+					SER_position[servo] = SER_r[servo];
+				}
+			}
+			break;
+		}
+	}
+	else { //servo not active
+		if (bitRead(SER_reg[servo], 1) == true) {
+			//register settings
+			SER_reg[servo] |= (1 << 0);
+			SER_reg[servo] &= ~(1 << 1);
+		}
+	}
+}
+void SHIFT() { //new much faster version
+	for (byte b = 1; b < 2;) {
+		for (byte i = 7; i < 8;) {
+			PORTB &= ~(1 << 0);
+			if (bitRead(SH_byte[b], i) == true) PINB |= (1 << 0);
 			PORTB |= (1 << 1);
 			PORTB &= ~(1 << 1);
 			i--;
@@ -512,7 +567,6 @@ void SHIFT() { //new much faster version
 	}
 	PORTB |= (1 << 2);
 	PORTB &= ~(1 << 2);
-	//EIMSK |= (1 << INT0); //INT0
 }
 void CLK_exe() {//called from loop
 
@@ -570,18 +624,6 @@ else {
 }
 void loop() {
 	DEK_DCCh();
-
-	/*
-
-		if (millis() - SER_freq > 2) { //10*8=80ms = 11,3hz
-			SER_freq = millis();
-			SER_run();
-		}
-		else {
-
-		}
-
-	*/
 	/*
 
 	//slowtimer
