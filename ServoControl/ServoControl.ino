@@ -10,7 +10,7 @@
 
 */
 //declarations common
-
+byte COM_reg;
 
 //Declaraties deKoder
 volatile unsigned long DEK_Tperiode; //laatst gemeten tijd 
@@ -29,7 +29,11 @@ byte DEK_Buf4[6];
 byte DEK_Buf5[6];
 
 //declarations shiftregisters
-byte SH_byte[2]; //2 bytes to be shifted out
+//byte SH_byte[2]; //2 bytes to be shifted out
+//used GPIOR0 GPIOR1 and GPIOR2
+
+
+
 byte SH_bitcount;
 byte SH_bytecount;
 byte SH_fase;
@@ -41,14 +45,16 @@ unsigned int SER_r[8]; //puls width right 32000=maximum? 24000 = centre?
 unsigned int SER_position[8]; //current position
 //unsigned int SER_goal[8]; //goal, position to reach
 byte SER_count[8];
-
-
 unsigned int SER_speed[8];//motion speed of servo
 byte SER_reg[8]; //register byte
 
+byte SW_last[8];
 byte COM_maxservo = 3;
 unsigned int COM_dccadres = 1; //basic adres DCC receive
-unsigned long CLK_time;
+//unsigned long CLK_time;
+
+
+
 //declaration for testing can be removed (later)
 volatile unsigned long tijdmeting;
 volatile unsigned long gemeten;
@@ -61,9 +67,16 @@ void setup() {
 	DDRB |= (1 << 2); //pin 10 shift clock set as output	
 	DDRB |= (1 << 3); //pin 11 OE (output enabled) van de shifts
 
-					  //DeKoder part, interrupt on PIN2
-	//DDRD &= ~(1 << 2);//bitClear(DDRD, 2); //pin2 input
-	//DDRD |= (1 << 2);
+	DDRC &= ~(1 << 0); //PIN A0 input switch kolom 1
+	DDRC &= ~(1 << 1); //PIN A1 input switch kolom 2
+	DDRC &= ~(1 << 2); //PIN A2 input switch kolom 3
+	DDRC &= ~(1 << 3); //PIN A3 input switch kolom 4
+	PORTC |= (1 << 0); //pullup resistor pin A0
+	PORTC |= (1 << 1); //pullup resistor pin A1
+	PORTC |= (1 << 2); //pullup resistor pin A2
+	PORTC |= (1 << 3); //pullup resistor pin A3
+
+	//DeKoder part, interrupt on PIN2
 
 	DEK_Tperiode = micros();
 	EICRA |= (1 << 0);//EICRA – External Interrupt Control Register A bit0 > 1 en bit1 > 0 (any change)
@@ -457,7 +470,7 @@ void SER_init() {
 		SER_l[i] = 18000; //left positio
 		SER_r[i] = 30000; //right position
 		SER_position[i] = 24000; //current position, initial start
-		SER_speed[i] = 800; // 500;
+		SER_speed[i] = 500; // 500;
 	}
 }
 void SER_start(byte srv, boolean direction) {
@@ -473,23 +486,23 @@ void SER_start(byte srv, boolean direction) {
 }
 void SER_stop() { //called from ISR//
 	PINB |= (1 << 4);
-	SH_byte[0] &= ~(1 << servo); //reset puls servo
-	TCCR1B = 0; //stop timer 2
+	GPIOR0 &= ~(1 << servo); //reset puls servo
+	TCCR1B = 0; //stop timer 2	
 	SHIFT();
 	SER_run();
 }
 void SER_run() {
 	byte count;
 	byte temp;
-	GPIOR0 ^= (1 << 0);
+	COM_reg ^= (1 << 0);
 	TCNT1 = 0;
-	if (bitRead(GPIOR0, 0) == true) { //test start servo	
+	if (bitRead(COM_reg, 0) == true) { //test start servo	
 		servo++;
 		if (servo > 7) servo = 0;
 
-		SH_byte[0] &= ~(1 << servo); //clear bit
+		GPIOR0 &= ~(1 << servo); //clear bit
 		if (bitRead(SER_reg[servo], 0) == true) {
-			SH_byte[0] |= (1 << servo); //set servo puls	
+			GPIOR0 |= (1 << servo); //set servo puls				
 			SHIFT();
 		}
 		OCR1A = SER_position[servo]; // – set new step position in Output Compare Register A
@@ -502,14 +515,11 @@ void SER_run() {
 	}
 	else { //pauze interval between servo controlpulses
 		SER_set(); //stond eerst hierboven
-		OCR1A = 20000; //12000 too fast makes dcc receive crash
+		OCR1A = 18000; //18000
 		TCCR1B = 2; //gives period of 6ms			
 	}
 }
 void SER_set() { //called from SER_run 	
-
-	//deze servo klaarzetten voor volgende puls, wordt uitgvoerd nadat de eventuele puls is verstuurd, of deze servo is gepasseerd.
-	//dus wat hier wordt gedaan komt de volgende keer dat deze servo wordt bekeken. na ongeveer een 20ms
 	if (bitRead(SER_reg[servo], 0) == true) { //servo runs
 		switch (bitRead(SER_reg[servo], 2)) {
 		case false:
@@ -553,21 +563,77 @@ void SER_set() { //called from SER_run
 			SER_reg[servo] &= ~(1 << 1);
 		}
 	}
+	GPIOR1 = (GPIOR1 << 1);
+	GPIOR1 |= (1 << 0);
+	if (GPIOR1 == 0xFF)GPIOR1 &= ~(1 << 0);
 }
-void SHIFT() { //new much faster version
-	for (byte b = 1; b < 2;) {
-		for (byte i = 7; i < 8;) {
-			PORTB &= ~(1 << 0);
-			if (bitRead(SH_byte[b], i) == true) PINB |= (1 << 0);
-			PORTB |= (1 << 1);
-			PORTB &= ~(1 << 1);
-			i--;
+void SHIFT() {
+	SHIFT1();
+	SHIFT0();
+	PINB |= (1 << 2);
+	PINB |= (1 << 2);
+	//read switches
+	SW_exe();
+}
+void SW_exe() {
+	//reads switches
+	byte changed;
+	byte sw;
+	byte srv;
+	boolean dir;
+	for (byte i = 0; i < 8; i++) {
+		if (bitRead(GPIOR1, i) == false) {
+			changed = (PINC ^ SW_last[i]);
+			if (changed > 0) {
+				for (byte b = 0; b < 8; b++) {
+					if (bitRead(changed, b) == true & (bitRead(PINC, b) == false)) {
+						sw = (i * 4) + (b );
+						Serial.println(sw);
+						
+						if (sw < 4) {
+							srv = sw;
+							dir = false;
+						}
+						else if (sw < 8) {
+							srv = sw - 4;
+							dir = true;
+						}
+						else if (sw < 12) {
+							srv = sw - 4;
+							dir = false;
+						}
+						else {
+							srv = sw - 8;
+							dir = true;
+						}
+						SER_start(srv, dir);
+					}
+				}
+			}
+			SW_last[i] = PINC;
+			i = 10; //only one kolom can be read
 		}
-		b--;
 	}
-	PORTB |= (1 << 2);
-	PORTB &= ~(1 << 2);
 }
+void SHIFT0() {
+	for (byte i = 7; i < 8;) {
+		PORTB &= ~(1 << 0);
+		if (bitRead(GPIOR0, i) == true) PINB |= (1 << 0);
+		PINB |= (1 << 1);
+		PINB |= (1 << 1);
+		i--;
+	}
+}
+void SHIFT1() {
+	for (byte i = 7; i < 8;) {
+		PORTB &= ~(1 << 0);
+		if (bitRead(GPIOR1, i) == true) PINB |= (1 << 0);
+		PINB |= (1 << 1);
+		PINB |= (1 << 1);
+		i--;
+	}
+}
+
 void CLK_exe() {//called from loop
 
 	//Serial.println(SH_byte[0] + SH_byte[1]);	
@@ -624,6 +690,8 @@ else {
 }
 void loop() {
 	DEK_DCCh();
+	//SHIFT();
+
 	/*
 
 	//slowtimer

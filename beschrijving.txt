@@ -10,7 +10,8 @@ bit4
 bit5
 bit6
 bit7
+COM_reg
 
-GPIOR0
-bit0= Servo run or interval
-bit1= disable shiftregisters during DCC interupt true=disable
+
+
+GPIOR0, GPIOR1, GPIOR2 gebruiken voor de uit te shiften bytes
