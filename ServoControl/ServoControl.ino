@@ -9,8 +9,13 @@
 
 
 */
+
+#include <EEPROM.h>
+
 //declarations common
 byte COM_reg;
+
+byte COM_mode;
 
 //Declaraties deKoder
 volatile unsigned long DEK_Tperiode; //laatst gemeten tijd 
@@ -32,8 +37,6 @@ byte DEK_Buf5[6];
 //byte SH_byte[2]; //2 bytes to be shifted out
 //used GPIOR0 GPIOR1 and GPIOR2
 
-
-
 byte SH_bitcount;
 byte SH_bytecount;
 byte SH_fase;
@@ -47,13 +50,16 @@ unsigned int SER_position[8]; //current position
 byte SER_count[8];
 unsigned int SER_speed[8];//motion speed of servo
 byte SER_reg[8]; //register byte
-
+byte SER_last; //holds last controlled servo (not DCC controlled)
+byte SER_swm; // EEPROM 100; switch mode for the servo mono (default) true, dual false
 byte SW_last[8];
 byte COM_maxservo = 3;
 unsigned int COM_dccadres = 1; //basic adres DCC receive
 //unsigned long CLK_time;
 
-
+byte LED_mode;
+unsigned long LED_time;
+int LED_count[2]; //two counters for led effects
 
 //declaration for testing can be removed (later)
 volatile unsigned long tijdmeting;
@@ -66,16 +72,28 @@ void setup() {
 	DDRB |= (1 << 1); //pin 9 Rclock, latch set as output
 	DDRB |= (1 << 2); //pin 10 shift clock set as output	
 	DDRB |= (1 << 3); //pin 11 OE (output enabled) van de shifts
+	DDRB |= (1 << 4); //pin 12 red control led
+	DDRB |= (1 << 5); //pin 13 green control led
+
+	PORTB &= ~(1 << 4);
+	PORTB |= (1 << 5);
+
+
+
+	/*
 
 	DDRC &= ~(1 << 0); //PIN A0 input switch kolom 1
 	DDRC &= ~(1 << 1); //PIN A1 input switch kolom 2
 	DDRC &= ~(1 << 2); //PIN A2 input switch kolom 3
 	DDRC &= ~(1 << 3); //PIN A3 input switch kolom 4
+
 	PORTC |= (1 << 0); //pullup resistor pin A0
 	PORTC |= (1 << 1); //pullup resistor pin A1
 	PORTC |= (1 << 2); //pullup resistor pin A2
 	PORTC |= (1 << 3); //pullup resistor pin A3
+*/
 
+	PORTC = 0x0F;
 	//DeKoder part, interrupt on PIN2
 
 	DEK_Tperiode = micros();
@@ -94,13 +112,19 @@ void setup() {
 	//servo part init
 	//servo = 0;
 	//test instellingen kan later eruit...
-
-	DDRB |= (1 << 4); //pin 4 as output temp led control of interrupt timer 2
-	//SER_reg[1] |= (1 << 0); //start servo 2
-
+	MEM_init();
 	//temp
 	SER_init();
+}
 
+void MEM_init() {
+	//reads and sets initial value from eeprom
+	SER_swm = EEPROM.read(100); //switch modes for servo's
+
+}
+void MEM_change() {
+	//checks for changes in Memorie bytes
+	if (EEPROM.read(100) != SER_swm)EEPROM.write(100, SER_swm); //switch modes
 
 }
 ISR(INT0_vect) { //syntax voor een ISR
@@ -473,19 +497,19 @@ void SER_init() {
 		SER_speed[i] = 500; // 500;
 	}
 }
-void SER_start(byte srv, boolean direction) {
-	if (bitRead(SER_reg[srv], 0) == false) { //servo not running
-		SER_reg[srv] |= (1 << 1); //set request for start
+void SER_start(byte sv, boolean direction) {
+	if (bitRead(SER_reg[sv], 0) == false) { //servo not running
+		SER_reg[sv] |= (1 << 1); //set request for start
 	}
 	if (direction == true) {
-		SER_reg[srv] |= (1 << 2);
+		SER_reg[sv] |= (1 << 2);
 	}
 	else {
-		SER_reg[srv] &= ~(1 << 2);
+		SER_reg[sv] &= ~(1 << 2);
 	}
 }
 void SER_stop() { //called from ISR//
-	PINB |= (1 << 4);
+	//PINB |= (1 << 4);
 	GPIOR0 &= ~(1 << servo); //reset puls servo
 	TCCR1B = 0; //stop timer 2	
 	SHIFT();
@@ -496,7 +520,7 @@ void SER_run() {
 	byte temp;
 	COM_reg ^= (1 << 0);
 	TCNT1 = 0;
-	if (bitRead(COM_reg, 0) == true) { //test start servo	
+	if (bitRead(COM_reg, 0) == true) { //start servo	
 		servo++;
 		if (servo > 7) servo = 0;
 
@@ -515,8 +539,8 @@ void SER_run() {
 	}
 	else { //pauze interval between servo controlpulses
 		SER_set(); //stond eerst hierboven
-		OCR1A = 18000; //18000
-		TCCR1B = 2; //gives period of 6ms			
+		OCR1A = 18000;// 18000; //18000
+		TCCR1B = 2; //2 gives period of 6ms			
 	}
 }
 void SER_set() { //called from SER_run 	
@@ -573,47 +597,170 @@ void SHIFT() {
 	PINB |= (1 << 2);
 	PINB |= (1 << 2);
 	//read switches
-	SW_exe();
+	SW_read();
 }
-void SW_exe() {
+void SW_read() {
 	//reads switches
 	byte changed;
+	byte read;
 	byte sw;
-	byte srv;
-	boolean dir;
-	for (byte i = 0; i < 8; i++) {
+
+	for (byte i = 0; i < 5; i++) {
 		if (bitRead(GPIOR1, i) == false) {
-			changed = (PINC ^ SW_last[i]);
+			read = PINC;
+			changed = read ^ SW_last[i];
 			if (changed > 0) {
+				SW_last[i] = read;
+				/*
+				Serial.println("-------");
+				Serial.print("ch: ");
+				Serial.println(changed);
+
+				Serial.print("last: ");
+				Serial.println(SW_last[i]);
+
+				Serial.print("read: ");
+				Serial.println(read);
+*/
 				for (byte b = 0; b < 8; b++) {
-					if (bitRead(changed, b) == true & (bitRead(PINC, b) == false)) {
-						sw = (i * 4) + (b );
-						Serial.println(sw);
-						
-						if (sw < 4) {
-							srv = sw;
-							dir = false;
-						}
-						else if (sw < 8) {
-							srv = sw - 4;
-							dir = true;
-						}
-						else if (sw < 12) {
-							srv = sw - 4;
-							dir = false;
-						}
-						else {
-							srv = sw - 8;
-							dir = true;
-						}
-						SER_start(srv, dir);
-					}
+					if (bitRead(changed, b) == true & bitRead(read, b) == false) SW_exe((i * 4) + (b));
 				}
 			}
-			SW_last[i] = PINC;
-			i = 10; //only one kolom can be read
 		}
 	}
+}
+void LED_exe(byte mode) {
+	switch (mode) {
+	case 0:
+		PORTB &= ~(1 << 4);
+		PORTB |= (1 << 5);
+		break;
+	case 1:
+		PORTB &= ~(1 << 5);
+		PORTB |= (1 << 4);
+
+		break;
+	case 2:
+		PORTB |= (1 << 4);
+		PORTB |= (1 << 5);
+		break;
+	}
+}
+void LED_timer() {
+	//timer for slow effects, starts in program modes 1 and 2 
+	if (millis() - LED_time > 20) { //calls every 20ms
+		LED_time = millis();
+		LED_blink();
+	}
+}
+
+void LED_blink() {
+	//creates all kind of flashing leds effects
+	
+	switch (LED_mode) {
+	case 10: //confirm switch mode dual, green led flash 4x
+		LED_count[0]++;
+		if (LED_count[0] == 3) {
+			PORTB |= (1 << 5);
+		}
+
+		if (LED_count[0] == 6) {
+			PORTB &= ~(1 << 5);
+			LED_count[1]++;
+			LED_count[0] = 0;
+			if (LED_count[1] > 8) {
+				LED_count[1] = 0;
+				LED_mode = 0;
+			}
+				
+		}
+		break;
+	case 11: //confirm switch mode single, green led flash once
+		LED_count[0]++;
+		if (LED_count[0] == 5) PORTB |= (1 << 5);
+		if (LED_count[0] == 50) {
+			PORTB &= ~(1 << 5);
+			LED_count[0] = 0;
+			LED_mode = 0;
+		}	
+	
+		break;
+	default:
+		//do nothing
+		break;
+	}
+
+}
+void SW_exe(byte sw) {
+	if (sw == 16) {
+		COM_mode++;
+		COM_reg |= (1 << 1); //enable ledtimer
+		if (COM_mode > 2) {
+			COM_mode = 0;
+			COM_reg &= ~(1 << 1); //disable Led timer
+			MEM_change(); //store made changes
+		}
+		LED_exe(COM_mode);
+	}
+	else {
+		switch (COM_mode) {
+		case 0:
+			SW_servo(sw);
+			break;
+		case 1:
+			SW_mode1(sw);
+			break;
+		case 2:
+			SW_mode2(sw);
+			break;
+		}
+	}
+	Serial.print("switch: ");
+	Serial.println(sw);
+	//Serial.println("");
+}
+void SW_mode1(byte sw) {
+	byte bit = sw;
+	if (bit > 3)bit = bit - 4;
+	//handles switche in program mode 1
+	//servo is last by push buttons controlled servo
+	switch (sw) {
+	case 0: //start servo
+		SER_reg[SER_last] ^= (1 << 2); //toggle direction
+		SER_reg[SER_last] |= (1 << 1); //set request for start
+		break;
+	case 10: //switch mode
+		SER_swm ^= (1 << SER_last); //toggle swich mode
+		LED_mode = 10;
+		if (bitRead(SER_swm, SER_last) == true)LED_mode = 11;
+		break;
+	}
+
+}
+void SW_mode2(byte sw) {
+	//handles switches in program mode 2
+
+}
+void SW_servo(byte sw) {
+	//handles switches in program mode 0
+	boolean dir;
+	if (sw < 4) {
+		SER_last = sw;
+		dir = false;
+	}
+	else if (sw < 8) {
+		SER_last = sw - 4;
+		dir = true;
+	}
+	else if (sw < 12) {
+		SER_last = sw - 4;
+		dir = false;
+	}
+	else {
+		SER_last = sw - 8;
+		dir = true;
+	}
+	SER_start(SER_last, dir);
 }
 void SHIFT0() {
 	for (byte i = 7; i < 8;) {
@@ -690,6 +837,7 @@ else {
 }
 void loop() {
 	DEK_DCCh();
+	if (bitRead(COM_reg, 1) == true)LED_timer(); //enabled in program modes 1 and 2, GPIOR2 ???
 	//SHIFT();
 
 	/*
