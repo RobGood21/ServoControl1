@@ -5,7 +5,7 @@ SER_reg
 bit0 servo is running.
 bit1 request for run
 bit2 direction, L=true R=false
-bit3 
+bit3 ???  EEPROM update all (true) update only last servo(false)
 bit4
 bit5
 bit6
@@ -14,9 +14,15 @@ bit7
 
 
 SER_swm switch mode voor de servo's true=mono (default), false=dual 
+
 COM_reg
 bit0 SER_run toggle between pauze and pulse output
 bit1 LED_blink enable true 
-
+bit2
+bit3
+bit4
+bit5
+bit6 Factory reset wait for confirmation (true), request confirmation(false)
+bit7 temp use
 
 GPIOR0, GPIOR1, GPIOR2 gebruiken voor de uit te shiften bytes
