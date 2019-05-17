@@ -49,15 +49,14 @@ unsigned int SER_r[8]; //EEPROM 30~45 puls width right 32000=maximum? 24000 = ce
 unsigned int SER_position[8]; //current position
 //unsigned int SER_goal[8]; //goal, position to reach
 byte SER_count[8];
-unsigned int SER_speed[8];//motion speed of servo
+unsigned int SER_speed[8];//EEPROM 50-66 motion speed of servo
 byte SER_reg[8]; //register byte
 byte SER_last; //holds last controlled servo (not DCC controlled)
 byte SER_swm; // EEPROM 100; switch mode for the servo mono (default) true, dual false
+byte SER_dir; //startup direction
 byte SW_last[8];
-
-
-byte COM_maxservo = 3; //not used??
-
+byte COM_maxservo = 4; //not used??
+volatile byte sc;
 
 unsigned int COM_dccadres = 1; //basic adres DCC receive
 byte LED_mode;
@@ -74,7 +73,7 @@ void setup() {
 	DDRB |= (1 << 0); //pin 8 serial data out, set as output
 	DDRB |= (1 << 1); //pin 9 Rclock, latch set as output
 	DDRB |= (1 << 2); //pin 10 shift clock set as output	
-	DDRB |= (1 << 3); //pin 11 OE (output enabled) van de shifts
+
 	DDRB |= (1 << 4); //pin 12 red control led
 	DDRB |= (1 << 5); //pin 13 green control led
 	PORTB &= ~(1 << 4);
@@ -111,12 +110,17 @@ void setup() {
 	//servo part init
 	//servo = 0;
 	//test instellingen kan later eruit...
-	SER_temp(); //tijdelijk gedurende maken...
+	//SER_temp(); //tijdelijk gedurende maken...
 	MEM_init();
 	//temp
 
 	LED_mode = 0;
 	COM_mode = 0;
+	SHIFT();
+	delay(10);
+	DDRB |= (1 << 3); //pin 11 OE (output enabled) van de shifts
+	SER_init();
+
 }
 void print() { //alleen bij debug
 	byte ea;
@@ -180,6 +184,17 @@ void MEM_init() {
 		}
 		ea = ea + 2;
 	}
+	//speed value array 
+	ea = 50; //start adres right
+	for (byte i = 0; i < 8; i++) {
+		EEPROM.get(ea, SER_speed[i]);
+		if (SER_speed[i] == 0xFFFF) {
+			SER_speed[i] = Sdef;
+			EEPROM.put(ea, SER_speed[i]); //put uses update only changed bits will be over written
+			COM_reg |= (1 << 7);
+		}
+		ea = ea + 2;
+	}
 
 	if (bitRead(COM_reg, 7) == true) Serial.println("updated");
 }
@@ -209,7 +224,12 @@ void MEM_change() {
 		EEPROM.put(ea, SER_r[i]);
 		ea = ea + 2;
 	}
-	Serial.println("mem_change");
+	//update speed
+	ea = 50;
+	for (byte i = 0; i < 8; i++) {
+		EEPROM.put(ea, SER_speed[i]);
+		ea = ea + 2;
+	}
 	//print();  kan weg alleen voor debug
 }
 ISR(INT0_vect) { //syntax voor een ISR
@@ -579,11 +599,39 @@ void SER_temp() { //kan weg alleen tijdens maken gebruikt
 		//SER_l[i] = Ldef; //left positio
 		//SER_r[i] = Rdef; //right position
 		SER_position[i] = Pdef; //current position, initial start
-		SER_speed[i] = Sdef; // 500;
+		//SER_speed[i] = Sdef; // 500;
 	}
 }
 void SER_init() {
-	//sets all servo's in start position
+	for (byte s = 0; s < 8; s++) {
+		if (bitRead(SER_dir, s) == true) {
+			SER_position[s] = SER_r[s];
+			SER_reg[s] &= ~(1 << 2);
+		}
+		else {
+			SER_position[s] = SER_l[s];
+			SER_reg[s] |= (1 << 2);
+		}
+	}
+}
+void SER_stoppos() {
+	//sets all servo's in predefined stopdirection, use before powerdown
+	for (byte i = 0; i < 8; i++) {
+		if (bitRead(SER_dir, i) == true) {
+			SER_reg[i] |= (1 << 2);
+		}
+		else {
+			SER_reg[i] &= ~(1 << 2);
+		}
+		SER_reg[i] |= (1 << 1);
+	}
+}
+void SER_reset() {
+	//resets last controlled servo
+	SER_l[SER_last] = Ldef;
+	SER_r[SER_last] = Rdef;
+	SER_speed[SER_last] = Sdef;
+	SER_swm |= (1 << SER_last);
 }
 void SER_start(byte sv, byte direction) {
 	if (bitRead(SER_reg[sv], 0) == false) { //servo not running
@@ -638,6 +686,7 @@ void SER_run() {
 	}
 }
 void SER_set() { //called from SER_run 	
+	sc = 0;
 	if (bitRead(SER_reg[servo], 0) == true) { //servo runs
 		switch (bitRead(SER_reg[servo], 2)) { //direction
 		case false: //left
@@ -676,9 +725,16 @@ void SER_set() { //called from SER_run
 	}
 	else { //servo not active
 		if (bitRead(SER_reg[servo], 1) == true) {
+			
+			for (byte i = 0; i < 8; i++) {
+				if (bitRead(SER_reg[i], 0) == true)sc++;				
+			}
 			//register settings
+			Serial.println(sc);
+			if (sc < COM_maxservo) {
 			SER_reg[servo] |= (1 << 0);
 			SER_reg[servo] &= ~(1 << 1);
+			}
 		}
 	}
 	GPIOR1 = (GPIOR1 << 1);
@@ -749,7 +805,6 @@ void LED_timer() {
 
 void LED_blink() {
 	//creates all kind of flashing leds effects
-
 	switch (LED_mode) {
 	case 0:
 		//do nothing
@@ -760,6 +815,14 @@ void LED_blink() {
 		if (LED_count[0] == 4) {
 			LED_count[0] = 0;
 			PORTB &= ~(3 << 4);
+		}
+		break;
+	case 2: //servo reset wait for confirmation
+		LED_count[0]++;
+		if (LED_count[0] == 3) 	PORTB |= (1 << 5);
+		if (LED_count[0] == 4) {
+			LED_count[0] = 0;
+			PORTB &= ~(1 << 5);
 		}
 		break;
 
@@ -790,6 +853,15 @@ void LED_blink() {
 		}
 
 		break;
+	case 20: //confirm any button pressed
+		LED_count[0]++;
+		if (LED_count[0] == 2)PORTB |= (1 << 5);
+		if (LED_count[0] == 4) {
+			PORTB &= ~(1 << 5);
+			LED_count[0] = 0;
+			LED_mode = 0;
+		}
+		break;
 	default:
 		//do nothing
 		break;
@@ -800,9 +872,11 @@ void SW_exe(byte sw) {
 	if (sw == 16) {
 		COM_mode++;
 		COM_reg |= (1 << 1); //enable ledtimer
+		if (COM_mode == 1)SER_stoppos();
 		if (COM_mode > 2) {
 			COM_mode = 0;
 			COM_reg &= ~(1 << 1); //disable Led timer
+			COM_reg &= ~(1 << 6); //reset confirmation bit
 			MEM_change(); //store made changes
 		}
 		LED_exe(COM_mode);
@@ -820,8 +894,8 @@ void SW_exe(byte sw) {
 			break;
 		}
 	}
-	Serial.print("switch: ");
-	Serial.println(sw);
+	//Serial.print("switch: ");
+	//Serial.println(sw);
 	//Serial.println("");
 }
 void SW_mode1(byte sw) {
@@ -830,18 +904,20 @@ void SW_mode1(byte sw) {
 	if (bit > 3)bit = bit - 4;
 	//handles switche in program mode 1
 	//servo is last by push buttons controlled servo
+	LED_mode = 20;
 	switch (sw) {
 	case 0: //start servo
 		SER_reg[SER_last] ^= (1 << 2); //toggle direction
 		SER_reg[SER_last] |= (1 << 1); //set request for start
+
 		break;
 	case 1: //move counter clockwise
 		Serial.println("left");
 		if (bitRead(td, 2) == false) { //determin direction, asumed current position
-			SER_l[SER_last] = SER_l[SER_last] + 1000;
+			SER_l[SER_last] = SER_l[SER_last] + 200;
 		}
 		else {
-			SER_r[SER_last] = SER_r[SER_last] + 1000;
+			SER_r[SER_last] = SER_r[SER_last] + 200;
 		}
 		SER_reg[SER_last] |= (1 << 1); //request servo start
 
@@ -849,21 +925,36 @@ void SW_mode1(byte sw) {
 	case 2: //move clockwise
 		Serial.println("right");
 		if (bitRead(td, 2) == false) { //determin direction
-			SER_l[SER_last] = SER_l[SER_last] - 1000;
+			SER_l[SER_last] = SER_l[SER_last] - 200;
 		}
 		else {
-			SER_r[SER_last] = SER_r[SER_last] - 1000;
+			SER_r[SER_last] = SER_r[SER_last] - 200;
 		}
 		SER_reg[SER_last] |= (1 << 1); //request servo start
 		break;
-
+	case 3: //decrease speed
+		if (SER_speed[SER_last] > 75) SER_speed[SER_last] = SER_speed[SER_last] - 75;
+		break;
+	case 8: //increase speed
+		SER_speed[SER_last] = SER_speed[SER_last] + 75;
+		break;
 	case 10: //switch mode
 		SER_swm ^= (1 << SER_last); //toggle swich mode
 		LED_mode = 10;
 		if (bitRead(SER_swm, SER_last) == true)LED_mode = 11;
 		break;
-	}
 
+	case 11: //reset this servo to default values
+		if (bitRead(COM_reg, 6) == false) {
+			COM_reg |= (1 << 6);
+			LED_mode = 2; //flashing only green
+		}
+		else {
+			COM_reg &= ~(1 << 6);
+			SER_reset();
+		}
+		break;
+	}
 }
 void SW_mode2(byte sw) {
 	//handles switches in program mode 2
@@ -992,6 +1083,7 @@ void loop() {
 	DEK_DCCh();
 	if (bitRead(COM_reg, 1) == true)LED_timer(); //enabled in program modes 1 and 2, GPIOR2 ???
 	//SHIFT();
+
 
 	/*
 
