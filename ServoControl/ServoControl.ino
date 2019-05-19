@@ -15,9 +15,8 @@
 
 //declarations common
 byte COM_reg;
-
 byte COM_mode;
-
+byte COM_dcc; //basic adres DCC receive
 //Declaraties deKoder
 volatile unsigned long DEK_Tperiode; //laatst gemeten tijd 
 volatile unsigned int DEK_duur; //gemeten duur van periode tussen twee interupts
@@ -58,7 +57,7 @@ byte SW_last[8];
 byte COM_maxservo = 4; //not used??
 volatile byte sc;
 
-unsigned int COM_dccadres = 1; //basic adres DCC receive
+
 byte LED_mode;
 unsigned long LED_time;
 int LED_count[2]; //two counters for led effects
@@ -122,53 +121,22 @@ void setup() {
 	SER_init();
 
 }
-void print() { //alleen bij debug
-	byte ea;
-	int temp;
-	Serial.println("******In ARRAY");
-	Serial.println("left");
-	for (byte i = 0; i < 8; i++) {
-		Serial.println(SER_l[i]);
-	}
-	Serial.println("");
-	Serial.println("right");
-	for (byte i = 0; i < 8; i++) {
-		Serial.println(SER_r[i]);
-	}
-	Serial.println("");
 
-	Serial.println("***IN EEPROM");
-	Serial.println("left");
-	ea = 10;
-	for (byte i = 0; i < 8; i++) {
-		EEPROM.get(ea, temp);
-		Serial.println(temp);
-		ea = ea + 2;
-	}
-
-	ea = 30;
-	Serial.println("right");
-	for (byte i = 0; i < 8; i++) {
-		EEPROM.get(ea, temp);
-		Serial.println(temp);
-		ea = ea + 2;
-	}
-	Serial.println("");
-}
 void MEM_init() {
 	//runs once in startup and part of factory settings reload
 	byte ea = 0; //ea=eeprom adres
 	//reads and sets initial value from eeprom
 	SER_swm = EEPROM.read(100); //switch modes for servo's
+	COM_dcc = EEPROM.read(101); //dcc decoder adres (default 255)
 
 	//Left position value array
+
 	ea = 10; //start adress left
 	for (byte i = 0; i < 8; i++) {
 		EEPROM.get(ea, SER_l[i]);
 		if (SER_l[i] == 0xFFFF) {
 			SER_l[i] = Ldef;
 			EEPROM.put(ea, SER_l[i]); //put uses update only changed bits will be over written
-			COM_reg |= (1 << 7);
 		}
 		ea = ea + 2;
 	}
@@ -180,7 +148,6 @@ void MEM_init() {
 		if (SER_r[i] == 0xFFFF) {
 			SER_r[i] = Rdef;
 			EEPROM.put(ea, SER_r[i]); //put uses update only changed bits will be over written
-			COM_reg |= (1 << 7);
 		}
 		ea = ea + 2;
 	}
@@ -191,12 +158,9 @@ void MEM_init() {
 		if (SER_speed[i] == 0xFFFF) {
 			SER_speed[i] = Sdef;
 			EEPROM.put(ea, SER_speed[i]); //put uses update only changed bits will be over written
-			COM_reg |= (1 << 7);
 		}
 		ea = ea + 2;
 	}
-
-	if (bitRead(COM_reg, 7) == true) Serial.println("updated");
 }
 void MEM_factory() {
 	//resets all EEPPROM to 0xFF
@@ -213,6 +177,7 @@ void MEM_change() {
 	//checks for changes in Memorie
 	EEPROM.update(100, SER_swm); //switch modes
 	//update left position
+	
 	ea = 10;
 	for (byte i = 0; i < 8; i++) {
 		EEPROM.put(ea, SER_l[i]);
@@ -539,7 +504,7 @@ void COM_exe(boolean type, int decoder, int channel, boolean port, boolean onoff
 	int adres;
 	adres = ((decoder - 1) * 4) + channel;
 	//Applications 
-	APP_Monitor(type, adres, decoder, channel, port, onoff, cv, value);
+	//APP_Monitor(type, adres, decoder, channel, port, onoff, cv, value);
 	APP_function(type, adres, decoder, channel, port, onoff, cv, value);
 }
 void APP_Monitor(boolean type, int adres, int decoder, int channel, boolean port, boolean onoff, int cv, int value) {
@@ -581,17 +546,28 @@ void APP_Monitor(boolean type, int adres, int decoder, int channel, boolean port
 	Serial.println("");
 }
 void APP_function(boolean type, int adres, int decoder, int channel, boolean port, boolean onoff, int cv, int value) {
-	byte dcc;
-	//voor hoge dcc adressen gaat dit denk ik  niet goed later nog en naar kijken
-	dcc = adres - COM_dccadres;
-	//Serial.println(dcc);
-	if (dcc < 8) { //0~7
-		if (type == false) { //switch command
-			SER_start(dcc, port);
-		}
-		else { //CV command
+	unsigned int dcc; //adres to be calculated?
+	if (bitRead(COM_reg, 7) == true) {//waiting for DCC decoder adres
+		if (decoder < 255) { //possible values 0-254
+			COM_dcc = decoder;			
+			LED_mode = 4;
+			COM_mode = 0;
+
 		}
 	}
+	else {
+		//Serial.println(COM_dcc);
+		dcc = (adres - (COM_dcc - 1) * 4) - 1;
+		//Serial.println(dcc);
+		if (dcc < 8) {
+			if (type == false) { //switch command
+				SER_start(dcc, port);
+			}
+			else { //CV command
+			}
+		}
+	}
+
 }
 void SER_temp() { //kan weg alleen tijdens maken gebruikt
 	//runs ones called from setup
@@ -725,15 +701,15 @@ void SER_set() { //called from SER_run
 	}
 	else { //servo not active
 		if (bitRead(SER_reg[servo], 1) == true) {
-			
+
 			for (byte i = 0; i < 8; i++) {
-				if (bitRead(SER_reg[i], 0) == true)sc++;				
+				if (bitRead(SER_reg[i], 0) == true)sc++;
 			}
 			//register settings
-			Serial.println(sc);
+			//Serial.println(sc);
 			if (sc < COM_maxservo) {
-			SER_reg[servo] |= (1 << 0);
-			SER_reg[servo] &= ~(1 << 1);
+				SER_reg[servo] |= (1 << 0);
+				SER_reg[servo] &= ~(1 << 1);
 			}
 		}
 	}
@@ -814,7 +790,7 @@ void LED_blink() {
 		if (LED_count[0] == 3) 	PORTB |= (3 << 4);
 		if (LED_count[0] == 4) {
 			LED_count[0] = 0;
-			PORTB &= ~(3 << 4);
+			PINB |= (3 << 4);
 		}
 		break;
 	case 2: //servo reset wait for confirmation
@@ -823,6 +799,31 @@ void LED_blink() {
 		if (LED_count[0] == 4) {
 			LED_count[0] = 0;
 			PORTB &= ~(1 << 5);
+		}
+		break;
+	case 3://DCC decoder adress set, wait for command
+		LED_count[0]++;
+		if (LED_count[0] == 5) {
+			PORTB |= (1 << 4);
+			PORTB &= ~(1 << 5);
+		}
+		if (LED_count[0] == 10) {
+			PINB |= (3 << 4);
+			LED_count[0] = 0;
+		}
+		break;
+	case 4: //confirm DCC adres received
+		LED_count[0]++;
+		if(LED_count[0]==10)PORTB &= ~(3 << 4);
+		if (LED_count[0] == 15) PORTB |= (3 << 4);
+		if (LED_count[0] == 40)	PORTB &= ~(3 << 4);
+		if (LED_count[0] == 50) {
+			LED_exe(0);
+			LED_count[0] = 0;
+			LED_count[1] = 0;
+			LED_mode = 0;
+			COM_reg &= ~B11100010; //reset flags
+			EEPROM.update(101, COM_dcc);  //dcc decoder adress
 		}
 		break;
 
@@ -871,15 +872,27 @@ void LED_blink() {
 void SW_exe(byte sw) {
 	if (sw == 16) {
 		COM_mode++;
-		COM_reg |= (1 << 1); //enable ledtimer
-		if (COM_mode == 1)SER_stoppos();
-		if (COM_mode > 2) {
-			COM_mode = 0;
-			COM_reg &= ~(1 << 1); //disable Led timer
-			COM_reg &= ~(1 << 6); //reset confirmation bit
+		if (COM_mode > 2)COM_mode = 0;					
+		switch (COM_mode) {
+		case 0:
+			COM_reg &= ~B11100010;
+			//COM_reg &= ~(1 << 1); //disable Led timer
+			//COM_reg &= ~(7 << 5); //reset confirmation bits			
+			LED_mode = 0;
 			MEM_change(); //store made changes
+			LED_exe(0);
+			break;
+		case 1:
+			LED_exe(1);
+			if (COM_mode == 1)SER_stoppos();
+			COM_reg |= (1 << 1); //enable ledtimer, hoeft niet in 2 in 2 kom je alleen via 1
+			break;
+		case 2:
+			LED_exe(2);
+			break;
+		default:
+			break;
 		}
-		LED_exe(COM_mode);
 	}
 	else {
 		switch (COM_mode) {
@@ -901,6 +914,7 @@ void SW_exe(byte sw) {
 void SW_mode1(byte sw) {
 	byte td = SER_reg[SER_last]; //store register of active servo
 	byte bit = sw;
+	int temp;
 	if (bit > 3)bit = bit - 4;
 	//handles switche in program mode 1
 	//servo is last by push buttons controlled servo
@@ -912,7 +926,7 @@ void SW_mode1(byte sw) {
 
 		break;
 	case 1: //move counter clockwise
-		Serial.println("left");
+		//Serial.println("left");
 		if (bitRead(td, 2) == false) { //determin direction, asumed current position
 			SER_l[SER_last] = SER_l[SER_last] + 200;
 		}
@@ -923,7 +937,7 @@ void SW_mode1(byte sw) {
 
 		break;
 	case 2: //move clockwise
-		Serial.println("right");
+		//Serial.println("right");
 		if (bitRead(td, 2) == false) { //determin direction
 			SER_l[SER_last] = SER_l[SER_last] - 200;
 		}
@@ -933,10 +947,12 @@ void SW_mode1(byte sw) {
 		SER_reg[SER_last] |= (1 << 1); //request servo start
 		break;
 	case 3: //decrease speed
-		if (SER_speed[SER_last] > 75) SER_speed[SER_last] = SER_speed[SER_last] - 75;
+		temp = SER_speed[SER_last] / 10;
+		if (SER_speed[SER_last] > temp) SER_speed[SER_last] = SER_speed[SER_last] - temp;
 		break;
 	case 8: //increase speed
-		SER_speed[SER_last] = SER_speed[SER_last] + 75;
+		temp = SER_speed[SER_last] / 10;
+		if(SER_speed[SER_last]+temp < 0xFFFF)SER_speed[SER_last] = SER_speed[SER_last] + temp;
 		break;
 	case 10: //switch mode
 		SER_swm ^= (1 << SER_last); //toggle swich mode
@@ -959,6 +975,10 @@ void SW_mode1(byte sw) {
 void SW_mode2(byte sw) {
 	//handles switches in program mode 2
 	switch (sw) {
+	case 10: //setting DCC decoder adres
+		COM_reg |= (1 << 7);
+		LED_mode = 3;
+		break;
 	case 11: //factory reset, needs 2x press
 		if (bitRead(COM_reg, 6) == false) {
 			COM_reg |= (1 << 6);

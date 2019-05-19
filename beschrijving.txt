@@ -21,7 +21,7 @@ bit1 LED_blink enable true
 bit2 
 bit3
 bit4
-bit5
+bit5 
 bit6 (Factory) reset wait for confirmation (true), request confirmation(false)
 bit7 temp use
 
