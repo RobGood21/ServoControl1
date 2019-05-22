@@ -12,10 +12,13 @@
 # define Rdef 30000 //right position default value
 # define Sdef 500 //speed servo default value
 # define Pdef 24000 //Centre position default value
+# define LMdef 21000 //position left centre
+# define RMdef 27000 //position right centre
 
 //declarations common
 byte COM_reg;
 byte COM_mode;
+byte MEM_reg; //EEPROM #105 register with to be restored settings
 byte COM_dcc; //basic adres DCC receive
 //Declaraties deKoder
 volatile unsigned long DEK_Tperiode; //laatst gemeten tijd 
@@ -45,14 +48,18 @@ byte SH_fase;
 byte servo; //adresses current handled servo in SER_exe
 unsigned int SER_l[8]; //EEPROM 10~25 puls width left
 unsigned int SER_r[8]; //EEPROM 30~45 puls width right 32000=maximum? 24000 = centre?
+unsigned int SER_lm[8]; //EEPROM 70-86
+unsigned int SER_rm[8]; //EEPROM 110-126
 unsigned int SER_position[8]; //current position
 //unsigned int SER_goal[8]; //goal, position to reach
+unsigned int SER_target[8]; //de te bereiken positie
+byte SER_dir[8]; //EEPROM 0~7 startup direction 0=l 1=lm 2=rm 3=r 0xff=midden
 byte SER_count[8];
 unsigned int SER_speed[8];//EEPROM 50-66 motion speed of servo
 byte SER_reg[8]; //register byte
 byte SER_last; //holds last controlled servo (not DCC controlled)
 byte SER_swm; // EEPROM 100; switch mode for the servo mono (default) true, dual false
-byte SER_dir; //startup direction
+
 byte SW_last[8];
 byte COM_maxservo = 4; //not used??
 volatile byte sc;
@@ -60,7 +67,7 @@ volatile byte sc;
 
 byte LED_mode;
 unsigned long LED_time;
-int LED_count[2]; //two counters for led effects
+int LED_count[3]; //two counters for led effects and booleans in blink
 
 //declaration for testing can be removed (later)
 volatile unsigned long tijdmeting;
@@ -111,26 +118,38 @@ void setup() {
 	//test instellingen kan later eruit...
 	//SER_temp(); //tijdelijk gedurende maken...
 	MEM_init();
-	//temp
+	SER_init();
 
+	DDRB |= (1 << 3); //pin 11 OE (output enabled) van de shifts
+
+		//temp
 	LED_mode = 0;
 	COM_mode = 0;
 	SHIFT();
 	delay(10);
-	DDRB |= (1 << 3); //pin 11 OE (output enabled) van de shifts
-	SER_init();
+
+
 
 }
 
 void MEM_init() {
 	//runs once in startup and part of factory settings reload
-	byte ea = 0; //ea=eeprom adres
+	byte ea; //ea=eeprom adres
 	//reads and sets initial value from eeprom
+
 	SER_swm = EEPROM.read(100); //switch modes for servo's
 	COM_dcc = EEPROM.read(101); //dcc decoder adres (default 255)
+	MEM_reg = EEPROM.read(105);
+
+	//direction position at startup
+	ea = 0;
+	for (byte i = 0; i < 8; i++) {
+		SER_dir[i] = EEPROM.read(ea);
+		ea++;
+	}
+
 
 	//Left position value array
-
 	ea = 10; //start adress left
 	for (byte i = 0; i < 8; i++) {
 		EEPROM.get(ea, SER_l[i]);
@@ -161,6 +180,28 @@ void MEM_init() {
 		}
 		ea = ea + 2;
 	}
+
+	//left centre position value array 
+	ea = 70; //start adres
+	for (byte i = 0; i < 8; i++) {
+		EEPROM.get(ea, SER_lm[i]);
+		if (SER_lm[i] == 0xFFFF) {
+			SER_lm[i] = LMdef;
+			EEPROM.put(ea, SER_lm[i]); //put uses update only changed bits will be over written
+		}
+		ea = ea + 2;
+	}
+	//right centre position value array 
+	ea = 110; //start adres
+	for (byte i = 0; i < 8; i++) {
+		EEPROM.get(ea, SER_rm[i]);
+		if (SER_rm[i] == 0xFFFF) {
+			SER_rm[i] = RMdef;
+			EEPROM.put(ea, SER_rm[i]); //put uses update only changed bits will be over written
+		}
+		ea = ea + 2;
+	}
+
 }
 void MEM_factory() {
 	//resets all EEPPROM to 0xFF
@@ -177,7 +218,10 @@ void MEM_change() {
 	//checks for changes in Memorie
 	EEPROM.update(100, SER_swm); //switch modes
 	//update left position
-	
+	EEPROM.update(105, MEM_reg);
+
+
+
 	ea = 10;
 	for (byte i = 0; i < 8; i++) {
 		EEPROM.put(ea, SER_l[i]);
@@ -195,7 +239,19 @@ void MEM_change() {
 		EEPROM.put(ea, SER_speed[i]);
 		ea = ea + 2;
 	}
-	//print();  kan weg alleen voor debug
+
+	//update left centre position
+	ea = 70;
+	for (byte i = 0; i < 8; i++) {
+		EEPROM.put(ea, SER_lm[i]);
+		ea = ea + 2;
+	}
+	//update right centre position
+	ea = 110;
+	for (byte i = 0; i < 8; i++) {
+		EEPROM.put(ea, SER_rm[i]);
+		ea = ea + 2;
+	}
 }
 ISR(INT0_vect) { //syntax voor een ISR
 //isr van PIN2
@@ -549,7 +605,7 @@ void APP_function(boolean type, int adres, int decoder, int channel, boolean por
 	unsigned int dcc; //adres to be calculated?
 	if (bitRead(COM_reg, 7) == true) {//waiting for DCC decoder adres
 		if (decoder < 255) { //possible values 0-254
-			COM_dcc = decoder;			
+			COM_dcc = decoder;
 			LED_mode = 4;
 			COM_mode = 0;
 
@@ -579,27 +635,33 @@ void SER_temp() { //kan weg alleen tijdens maken gebruikt
 	}
 }
 void SER_init() {
-	for (byte s = 0; s < 8; s++) {
-		if (bitRead(SER_dir, s) == true) {
-			SER_position[s] = SER_r[s];
-			SER_reg[s] &= ~(1 << 2);
-		}
-		else {
-			SER_position[s] = SER_l[s];
-			SER_reg[s] |= (1 << 2);
+	for (byte i = 0; i < 8; i++) {
+		switch (SER_dir[i]) {
+		case 0:
+			SER_position[i] = SER_l[i];
+			break;
+		case 1:
+			SER_position[i] = SER_lm[i];
+			break;
+		case 2:
+			SER_position[i] = SER_rm[i];
+			break;
+		case 3:
+			SER_position[i] = SER_r[i];
+			break;
+		default:
+			SER_position[i] = Pdef;
+			break;
 		}
 	}
 }
-void SER_stoppos() {
-	//sets all servo's in predefined stopdirection, use before powerdown
+void SER_gtcp() { //gtcp=go to current postion
+	//sets all servo's in current position, use before powerdown, and postion adjustment
 	for (byte i = 0; i < 8; i++) {
-		if (bitRead(SER_dir, i) == true) {
-			SER_reg[i] |= (1 << 2);
-		}
-		else {
-			SER_reg[i] &= ~(1 << 2);
-		}
+		EEPROM.update(i, SER_dir[i]);
+		SER_target[i] = SER_position[i];
 		SER_reg[i] |= (1 << 1);
+
 	}
 }
 void SER_reset() {
@@ -609,23 +671,54 @@ void SER_reset() {
 	SER_speed[SER_last] = Sdef;
 	SER_swm |= (1 << SER_last);
 }
-void SER_start(byte sv, byte direction) {
-	if (bitRead(SER_reg[sv], 0) == false) { //servo not running
-		SER_reg[sv] |= (1 << 1); //set request for start
-	}
-	switch (direction) {
-	case 0:
-		SER_reg[sv] ^= (1 << 2);
+
+void SER_start(byte sv, byte target) {
+	if (bitRead(SER_reg[sv], 0) == false) SER_reg[sv] |= (1 << 1); //request for run
+	switch (target) {
+	case 0: //toggle direction l<>r
+		SER_reg[sv] ^= (1 << 2); //direction l<>r
+		if (bitRead(SER_reg[sv], 2) == false) {
+			SER_target[sv] = SER_r[sv];
+			SER_dir[sv] = 3;
+		}
+		else {
+			SER_target[sv] = SER_l[sv];
+			SER_dir[sv] = 0;
+		}
 		break;
-	case 1:
+	case 1: //set direction l
 		SER_reg[sv] |= (1 << 2);
+		SER_target[sv] = SER_l[sv];
+		SER_dir[sv] = 0;
 		break;
-	case 2:
+	case 2: //set direction r
 		SER_reg[sv] &= ~(1 << 2);
+		SER_target[sv] = SER_r[sv];
+		SER_dir[sv] = 3;
+		break;
+	case 3: //toggle direction lm<>rm
+		SER_reg[sv] ^= (1 << 3); //direction lm<<>>rm
+		if (bitRead(SER_reg[sv], 3) == false) {
+			SER_target[sv] = SER_lm[sv];
+			SER_dir[sv] = 1;
+		}
+		else {
+			SER_target[sv] = SER_rm[sv];
+			SER_dir[sv] = 2;
+		}
+		break;
+	case 4:
+		SER_reg[sv] |= (1 << 3);
+		SER_target[sv] = SER_lm[sv];
+		SER_dir[sv] = 1;
+		break;
+	case 5:
+		SER_reg[sv] &= ~(1 << 3);
+		SER_target[sv] = SER_rm[sv];
+		SER_dir[sv] = 2;
 		break;
 	}
 }
-
 void SER_stop() { //called from ISR//
 	//PINB |= (1 << 4);
 	GPIOR0 &= ~(1 << servo); //reset puls servo
@@ -633,6 +726,7 @@ void SER_stop() { //called from ISR//
 	SHIFT();
 	SER_run();
 }
+
 void SER_run() {
 	byte count;
 	byte temp;
@@ -661,9 +755,38 @@ void SER_run() {
 		TCCR1B = 2; //2 gives period of 6ms			
 	}
 }
+
 void SER_set() { //called from SER_run 	
 	sc = 0;
 	if (bitRead(SER_reg[servo], 0) == true) { //servo runs
+		if (SER_position[servo] == SER_target[servo]) {
+			SER_count[servo]++;
+			if (SER_count[servo] > 4) {
+				SER_reg[servo] &= ~(1 << 0); //stop servo
+				SER_count[servo] = 0;
+			}
+		}
+		else if (SER_position[servo] > SER_target[servo]) {
+
+			if (SER_position[servo] - SER_target[servo] > SER_speed[servo]) {
+				SER_position[servo] = SER_position[servo] - SER_speed[servo];
+			}
+			else {
+				SER_position[servo] = SER_target[servo];
+			}
+
+		}
+		else if (SER_position[servo] < SER_target[servo]) {
+
+			if (SER_target[servo] - SER_position[servo] > SER_speed[servo]) {
+				SER_position[servo] = SER_position[servo] + SER_speed[servo];
+			}
+			else {
+				SER_position[servo] = SER_target[servo];
+			}
+		}
+		/*
+
 		switch (bitRead(SER_reg[servo], 2)) { //direction
 		case false: //left
 			if (SER_position[servo] == SER_l[servo]) {
@@ -698,6 +821,10 @@ void SER_set() { //called from SER_run
 			}
 			break;
 		}
+
+
+
+	*/
 	}
 	else { //servo not active
 		if (bitRead(SER_reg[servo], 1) == true) {
@@ -705,18 +832,20 @@ void SER_set() { //called from SER_run
 			for (byte i = 0; i < 8; i++) {
 				if (bitRead(SER_reg[i], 0) == true)sc++;
 			}
-			//register settings
-			//Serial.println(sc);
+			//limit active servo's standard 4
 			if (sc < COM_maxservo) {
 				SER_reg[servo] |= (1 << 0);
 				SER_reg[servo] &= ~(1 << 1);
 			}
 		}
 	}
+
+	//set registers for switch scanning
 	GPIOR1 = (GPIOR1 << 1);
 	GPIOR1 |= (1 << 0);
 	if (GPIOR1 == 0xFF)GPIOR1 &= ~(1 << 0);
 }
+
 void SHIFT() {
 	SHIFT1();
 	SHIFT0();
@@ -814,7 +943,7 @@ void LED_blink() {
 		break;
 	case 4: //confirm DCC adres received
 		LED_count[0]++;
-		if(LED_count[0]==10)PORTB &= ~(3 << 4);
+		if (LED_count[0] == 10)PORTB &= ~(3 << 4);
 		if (LED_count[0] == 15) PORTB |= (3 << 4);
 		if (LED_count[0] == 40)	PORTB &= ~(3 << 4);
 		if (LED_count[0] == 50) {
@@ -822,10 +951,46 @@ void LED_blink() {
 			LED_count[0] = 0;
 			LED_count[1] = 0;
 			LED_mode = 0;
-			COM_reg &= ~B11100010; //reset flags
+			COM_reg = 0x00;// &= ~B11100010; //reset flags
 			EEPROM.update(101, COM_dcc);  //dcc decoder adress
 		}
 		break;
+
+	case 5: //waiting confirmation all servo switch mode
+		//slow flashing red led
+		LED_count[0]++;
+		if (LED_count[0] == 20)PORTB &= ~(1 << 4);
+		if (LED_count[0] == 30) {
+			PORTB |= (1 << 4);
+			LED_count[0] = 0;
+		}
+		break;
+	case 6: //waiting confirmation all servo switch mode
+		//slow flashing red led
+		LED_count[0]++;
+		if (LED_count[0] == 20)PORTB &= ~(1 << 5);
+		if (LED_count[0] == 30) {
+			PORTB |= (1 << 5);
+			LED_count[0] = 0;
+		}
+		break;
+	case 7: //keuze 2 of 4 standen
+		LED_count[0]++;
+		if (LED_count[0] == 2)PORTB &= ~(1 << LED_count[2]);
+		if (LED_count[0] == 10) {
+			LED_count[1]++;
+			PORTB |= (1 << LED_count[2]);
+			LED_count[0] = 0;
+			if (LED_count[1] == 4) {
+				LED_count[1] = 0;
+				LED_count[2] = 0;
+				LED_mode = 0;
+			}
+		}
+		break;
+
+
+
 
 	case 10: //confirm switch mode dual, green led flash 4x
 		LED_count[0]++;
@@ -867,24 +1032,21 @@ void LED_blink() {
 		//do nothing
 		break;
 	}
-
 }
 void SW_exe(byte sw) {
 	if (sw == 16) {
 		COM_mode++;
-		if (COM_mode > 2)COM_mode = 0;					
+		if (COM_mode > 2)COM_mode = 0;
 		switch (COM_mode) {
 		case 0:
 			COM_reg &= ~B11100010;
-			//COM_reg &= ~(1 << 1); //disable Led timer
-			//COM_reg &= ~(7 << 5); //reset confirmation bits			
 			LED_mode = 0;
 			MEM_change(); //store made changes
 			LED_exe(0);
 			break;
 		case 1:
 			LED_exe(1);
-			if (COM_mode == 1)SER_stoppos();
+			SER_gtcp();
 			COM_reg |= (1 << 1); //enable ledtimer, hoeft niet in 2 in 2 kom je alleen via 1
 			break;
 		case 2:
@@ -952,14 +1114,15 @@ void SW_mode1(byte sw) {
 		break;
 	case 8: //increase speed
 		temp = SER_speed[SER_last] / 10;
-		if(SER_speed[SER_last]+temp < 0xFFFF)SER_speed[SER_last] = SER_speed[SER_last] + temp;
+		if (SER_speed[SER_last] + temp < 0xFFFF)SER_speed[SER_last] = SER_speed[SER_last] + temp;
 		break;
-	case 10: //switch mode
+	case 9: //switch mode
 		SER_swm ^= (1 << SER_last); //toggle swich mode
 		LED_mode = 10;
 		if (bitRead(SER_swm, SER_last) == true)LED_mode = 11;
 		break;
-
+	case 10:
+		break;
 	case 11: //reset this servo to default values
 		if (bitRead(COM_reg, 6) == false) {
 			COM_reg |= (1 << 6);
@@ -975,6 +1138,44 @@ void SW_mode1(byte sw) {
 void SW_mode2(byte sw) {
 	//handles switches in program mode 2
 	switch (sw) {
+	case 0: //Keuze 2 standen of 4 standen afstelling
+		MEM_reg ^= (1 << 1); //
+		LED_mode = 7;
+		if (bitRead(MEM_reg, 1) == true) { //twee standen groen knipper
+			LED_count[2] = 5;
+		}
+		else { //4 standen rood knipper
+			LED_count[2] = 4;
+		}
+
+		break;
+	case 9: //toggle switch mode all servo's
+		if (bitRead(COM_reg, 5) == false) {
+			COM_reg |= (1 << 5); //toggle register pin
+			if (bitRead(MEM_reg, 0) == true) {
+				LED_mode = 5;
+			}
+			else {
+				LED_mode = 6;
+			}
+
+		}
+		else {
+			COM_reg &= ~(1 << 5); //toggle register pin
+			LED_mode = 0;
+			LED_count[0] = 0;
+			PORTB |= (3 << 4); //leave leds burning
+			MEM_reg ^= (1 << 0); //toggle switch mode
+
+			if (bitRead(MEM_reg, 0) == true) {
+				SER_swm = 0xFF;
+			}
+			else {
+				SER_swm = 0x00;
+			}
+		}
+		break;
+
 	case 10: //setting DCC decoder adres
 		COM_reg |= (1 << 7);
 		LED_mode = 3;
@@ -997,34 +1198,44 @@ void SW_mode2(byte sw) {
 }
 void SW_servo(byte sw) {
 	//handles switches in program mode 0
-	byte dir;
+	byte target;
 	if (sw < 4) {
 		SER_last = sw;
 		if (bitRead(SER_swm, SER_last) == true) {
-			dir = 0; //toggle direction
+			target = 0; //toggle direction
 		}
 		else {
-			dir = 2;
+			target = 2;
 		}
 	}
 	else if (sw < 8) {
 		SER_last = sw - 4;
-		dir = 1;
+		if (bitRead(SER_swm, SER_last) == true) {
+			target = 3;
+		}
+		else {
+			target = 1;
+		}
 	}
 	else if (sw < 12) {
 		SER_last = sw - 4;
 		if (bitRead(SER_swm, SER_last) == true) {
-			dir = 0; //toggle direction
+			target = 0; //toggle direction
 		}
 		else {
-			dir = 2;
+			target = 2;
 		}
 	}
 	else {
 		SER_last = sw - 8;
-		dir = 1;
+		if (bitRead(SER_swm, SER_last) == true) {
+			target = 3;
+		}
+		else {
+			target = 1;
+		}
 	}
-	SER_start(SER_last, dir);
+	SER_start(SER_last, target);
 }
 void SHIFT0() {
 	for (byte i = 7; i < 8;) {

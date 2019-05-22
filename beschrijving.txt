@@ -5,15 +5,17 @@ SER_reg
 bit0 servo is running.
 bit1 request for run
 bit2 direction, L=true R=false
-bit3 ???  EEPROM update all (true) update only last servo(false)
+bit3 direction ,lm=true rm=false
 bit4
 bit5
 bit6
 bit7
 
+SER_dir 0=l 1=lm 2=rm 3=r other=4 (centre)
 
 
-SER_swm switch mode voor de servo's true=mono (default), false=dual 
+
+SER_swm switch mode voor de servo's true=mono, toggles directions (default), false=dual only l en r seperate switch
 
 COM_reg
 bit0 SER_run toggle between pauze and pulse output
@@ -21,8 +23,18 @@ bit1 LED_blink enable true
 bit2 
 bit3
 bit4
-bit5 
+bit5 request confirmation(all servos switchmode)
 bit6 (Factory) reset wait for confirmation (true), request confirmation(false)
-bit7 temp use
+bit7 adress programming, waiting for DCC command (true)
+
+MEM_reg #105 EEPROM
+bit0 switchmode 0(true); mode 1(false) 
+bit1 Afstelling 2 standen (default) true, of 4 standen false
+bit2
+bit3
+bit4
+bit5
+bit6
+bit7
 
 GPIOR0, GPIOR1, GPIOR2 gebruiken voor de uit te shiften bytes
