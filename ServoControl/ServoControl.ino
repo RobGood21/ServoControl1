@@ -1080,34 +1080,47 @@ void SW_mode1(byte sw) {
 	if (bit > 3)bit = bit - 4;
 	//handles switche in program mode 1
 	//servo is last by push buttons controlled servo
-	LED_mode = 20;
+	LED_mode = 20; //flash green for confirmation keypress
 	switch (sw) {
 	case 0: //start servo
-		SER_reg[SER_last] ^= (1 << 2); //toggle direction
-		SER_reg[SER_last] |= (1 << 1); //set request for start
-
+		if (bitRead(MEM_reg, 1) == true) { //twee standen servo
+			if (SER_dir[SER_last] != 0) {
+				temp = 1;
+			}
+			else {
+				temp = 2;
+			}
+		}
+		else { //4 standen servo
+			SER_dir[SER_last]++;
+			if (SER_dir[SER_last] > 3)SER_dir[SER_last] = 0;
+			switch (SER_dir[SER_last]) {
+			case 0:
+				temp = 1;
+				break;
+			case 1:
+				temp = 4;
+				break;
+			case 2:
+				temp = 5;
+				break;
+			case 3:
+				temp = 2;
+				break;
+			}
+		}
+		SER_start(SER_last, temp);
 		break;
-	case 1: //move counter clockwise
-		//Serial.println("left");
-		if (bitRead(td, 2) == false) { //determin direction, asumed current position
-			SER_l[SER_last] = SER_l[SER_last] + 200;
-		}
-		else {
-			SER_r[SER_last] = SER_r[SER_last] + 200;
-		}
-		SER_reg[SER_last] |= (1 << 1); //request servo start
 
+	case 1: //move counter clockwise
+		SER_pchng(200);
+		SER_reg[SER_last] |= (1 << 1); //request servo start
 		break;
 	case 2: //move clockwise
-		//Serial.println("right");
-		if (bitRead(td, 2) == false) { //determin direction
-			SER_l[SER_last] = SER_l[SER_last] - 200;
-		}
-		else {
-			SER_r[SER_last] = SER_r[SER_last] - 200;
-		}
+		SER_pchng(-200);
 		SER_reg[SER_last] |= (1 << 1); //request servo start
 		break;
+
 	case 3: //decrease speed
 		temp = SER_speed[SER_last] / 10;
 		if (SER_speed[SER_last] > temp) SER_speed[SER_last] = SER_speed[SER_last] - temp;
@@ -1149,7 +1162,7 @@ void SW_mode2(byte sw) {
 		}
 
 		break;
-	case 9: //toggle switch mode all servo's
+	case 1: //toggle switch mode all servo's
 		if (bitRead(COM_reg, 5) == false) {
 			COM_reg |= (1 << 5); //toggle register pin
 			if (bitRead(MEM_reg, 0) == true) {
@@ -1158,7 +1171,6 @@ void SW_mode2(byte sw) {
 			else {
 				LED_mode = 6;
 			}
-
 		}
 		else {
 			COM_reg &= ~(1 << 5); //toggle register pin
@@ -1195,6 +1207,27 @@ void SW_mode2(byte sw) {
 		break;
 	}
 
+}
+void SER_pchng(int mut) {
+
+	switch (SER_dir[SER_last]) {
+	case 0:
+		SER_l[SER_last] =SER_l[SER_last]+ mut;
+		SER_target[SER_last] = SER_l[SER_last];
+		break;
+	case 1:
+		SER_lm[SER_last] = SER_lm[SER_last] + mut;
+		SER_target[SER_last] = SER_lm[SER_last];
+		break;
+	case 2:
+		SER_rm[SER_last] = SER_rm[SER_last] + mut;
+		SER_target[SER_last] = SER_rm[SER_last];
+		break;
+	case 3:
+		SER_r[SER_last] = SER_r[SER_last] + mut;
+		SER_target[SER_last] = SER_r[SER_last];
+		break;
+	}
 }
 void SW_servo(byte sw) {
 	//handles switches in program mode 0
