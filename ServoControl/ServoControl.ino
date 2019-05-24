@@ -50,8 +50,7 @@ unsigned int SER_l[8]; //EEPROM 10~25 puls width left
 unsigned int SER_r[8]; //EEPROM 30~45 puls width right 32000=maximum? 24000 = centre?
 unsigned int SER_lm[8]; //EEPROM 70-86
 unsigned int SER_rm[8]; //EEPROM 110-126
-unsigned int SER_position[8]; //current position
-//unsigned int SER_goal[8]; //goal, position to reach
+unsigned int SER_position[8]; //EEPROM 130~146 stored last position
 unsigned int SER_target[8]; //de te bereiken positie
 byte SER_dir[8]; //EEPROM 0~7 startup direction 0=l 1=lm 2=rm 3=r 0xff=midden
 byte SER_count[8];
@@ -118,18 +117,12 @@ void setup() {
 	//test instellingen kan later eruit...
 	//SER_temp(); //tijdelijk gedurende maken...
 	MEM_init();
-	SER_init();
-
 	DDRB |= (1 << 3); //pin 11 OE (output enabled) van de shifts
-
 		//temp
 	LED_mode = 0;
 	COM_mode = 0;
 	SHIFT();
 	delay(10);
-
-
-
 }
 
 void MEM_init() {
@@ -141,14 +134,12 @@ void MEM_init() {
 	COM_dcc = EEPROM.read(101); //dcc decoder adres (default 255)
 	MEM_reg = EEPROM.read(105);
 
-	//direction position at startup
+	//direction position at startup, not used, can be used for startup positions
 	ea = 0;
 	for (byte i = 0; i < 8; i++) {
 		SER_dir[i] = EEPROM.read(ea);
 		ea++;
 	}
-
-
 	//Left position value array
 	ea = 10; //start adress left
 	for (byte i = 0; i < 8; i++) {
@@ -180,7 +171,6 @@ void MEM_init() {
 		}
 		ea = ea + 2;
 	}
-
 	//left centre position value array 
 	ea = 70; //start adres
 	for (byte i = 0; i < 8; i++) {
@@ -202,6 +192,40 @@ void MEM_init() {
 		ea = ea + 2;
 	}
 
+	//(stored) last position restore
+	ea = 130;
+	//Serial.println("INIT");
+	for (byte i = 0; i < 8; i++) {
+		EEPROM.get(ea, SER_position[i]);
+		if (SER_position[i] == 0xFFFF) {
+			SER_position[i] = Pdef;
+		}
+		//Serial.println(SER_position[i]);
+		ea = ea + 2;
+	}
+	//Serial.println("");
+
+}
+void MEM_position() {
+	int temp;
+	//Serial.println("MEM");
+	//stores current position of the servo's
+	byte ea;
+	ea = 130;
+	for (byte i = 0; i < 8; i++) {
+		EEPROM.put(ea, SER_position[i]);		
+		//Serial.println(SER_position[i]);
+		ea = ea + 2;
+	}
+	//Serial.println("");
+	
+	ea = 130;
+	for (byte i = 0; i < 8; i++) {
+		EEPROM.get(ea, temp);
+		//Serial.println(temp);
+		ea = ea + 2;
+	}
+	//Serial.println("");
 }
 void MEM_factory() {
 	//resets all EEPPROM to 0xFF
@@ -219,9 +243,6 @@ void MEM_change() {
 	EEPROM.update(100, SER_swm); //switch modes
 	//update left position
 	EEPROM.update(105, MEM_reg);
-
-
-
 	ea = 10;
 	for (byte i = 0; i < 8; i++) {
 		EEPROM.put(ea, SER_l[i]);
@@ -239,7 +260,6 @@ void MEM_change() {
 		EEPROM.put(ea, SER_speed[i]);
 		ea = ea + 2;
 	}
-
 	//update left centre position
 	ea = 70;
 	for (byte i = 0; i < 8; i++) {
@@ -608,61 +628,35 @@ void APP_function(boolean type, int adres, int decoder, int channel, boolean por
 			COM_dcc = decoder;
 			LED_mode = 4;
 			COM_mode = 0;
-
 		}
 	}
 	else {
 		//Serial.println(COM_dcc);
 		dcc = (adres - (COM_dcc - 1) * 4) - 1;
-		//Serial.println(dcc);
-		if (dcc < 8) {
+		if (dcc < 16) {
 			if (type == false) { //switch command
-				SER_start(dcc, port);
+				if (dcc < 8) {
+					if (port == true) {
+						SER_start(dcc, 1);
+					}
+					else {
+						SER_start(dcc, 2);
+					}
+				}
+				else if (dcc < 16) {
+					if (port == true) {
+						SER_start(dcc - 8, 4);
+					}
+					else {
+						SER_start(dcc - 8, 5);
+					}
+				}
 			}
 			else { //CV command
 			}
 		}
 	}
 
-}
-void SER_temp() { //kan weg alleen tijdens maken gebruikt
-	//runs ones called from setup
-	for (byte i = 0; i < 8; i++) {
-		//SER_l[i] = Ldef; //left positio
-		//SER_r[i] = Rdef; //right position
-		SER_position[i] = Pdef; //current position, initial start
-		//SER_speed[i] = Sdef; // 500;
-	}
-}
-void SER_init() {
-	for (byte i = 0; i < 8; i++) {
-		switch (SER_dir[i]) {
-		case 0:
-			SER_position[i] = SER_l[i];
-			break;
-		case 1:
-			SER_position[i] = SER_lm[i];
-			break;
-		case 2:
-			SER_position[i] = SER_rm[i];
-			break;
-		case 3:
-			SER_position[i] = SER_r[i];
-			break;
-		default:
-			SER_position[i] = Pdef;
-			break;
-		}
-	}
-}
-void SER_gtcp() { //gtcp=go to current postion
-	//sets all servo's in current position, use before powerdown, and postion adjustment
-	for (byte i = 0; i < 8; i++) {
-		EEPROM.update(i, SER_dir[i]);
-		SER_target[i] = SER_position[i];
-		SER_reg[i] |= (1 << 1);
-
-	}
 }
 void SER_reset() {
 	//resets last controlled servo
@@ -707,17 +701,19 @@ void SER_start(byte sv, byte target) {
 			SER_dir[sv] = 2;
 		}
 		break;
-	case 4:
+	case 4: //direction lm
 		SER_reg[sv] |= (1 << 3);
 		SER_target[sv] = SER_lm[sv];
 		SER_dir[sv] = 1;
 		break;
-	case 5:
+	case 5: //direction rm
 		SER_reg[sv] &= ~(1 << 3);
 		SER_target[sv] = SER_rm[sv];
 		SER_dir[sv] = 2;
 		break;
 	}
+	Serial.println(SER_position[servo]);
+	Serial.println(SER_target[servo]);
 }
 void SER_stop() { //called from ISR//
 	//PINB |= (1 << 4);
@@ -774,10 +770,8 @@ void SER_set() { //called from SER_run
 			else {
 				SER_position[servo] = SER_target[servo];
 			}
-
 		}
 		else if (SER_position[servo] < SER_target[servo]) {
-
 			if (SER_target[servo] - SER_position[servo] > SER_speed[servo]) {
 				SER_position[servo] = SER_position[servo] + SER_speed[servo];
 			}
@@ -989,9 +983,16 @@ void LED_blink() {
 		}
 		break;
 
-
-
-
+	case 8: //keuze 2 of 4 decoder adressen
+		LED_count[0]++;
+		if (LED_count[0] == 5) PINB |= (3 << 4);
+		if (LED_count[0] == 10) {
+			LED_count[0] = 0;
+			PINB |= (3 << 4);
+			LED_count[2]--;
+			if (LED_count[2] == 0)LED_mode = 0;
+		}
+		break;
 	case 10: //confirm switch mode dual, green led flash 4x
 		LED_count[0]++;
 		if (LED_count[0] == 3) {
@@ -1046,7 +1047,7 @@ void SW_exe(byte sw) {
 			break;
 		case 1:
 			LED_exe(1);
-			SER_gtcp();
+			MEM_position();
 			COM_reg |= (1 << 1); //enable ledtimer, hoeft niet in 2 in 2 kom je alleen via 1
 			break;
 		case 2:
@@ -1188,6 +1189,17 @@ void SW_mode2(byte sw) {
 		}
 		break;
 
+	case 9: //set two decoder adresses or 4 decoder adresses (4 positions by DCC commmands
+		MEM_reg ^= (1 << 2);
+		LED_mode = 8;
+		if (bitRead(MEM_reg, 2) == true) {
+			LED_count[2] = 3;
+		}
+		else {
+			LED_count[2] = 5;
+		}
+		break;
+
 	case 10: //setting DCC decoder adres
 		COM_reg |= (1 << 7);
 		LED_mode = 3;
@@ -1212,7 +1224,7 @@ void SER_pchng(int mut) {
 
 	switch (SER_dir[SER_last]) {
 	case 0:
-		SER_l[SER_last] =SER_l[SER_last]+ mut;
+		SER_l[SER_last] = SER_l[SER_last] + mut;
 		SER_target[SER_last] = SER_l[SER_last];
 		break;
 	case 1:
