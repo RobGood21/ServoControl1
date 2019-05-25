@@ -19,6 +19,8 @@
 byte COM_reg;
 byte COM_mode;
 byte MEM_reg; //EEPROM #105 register with to be restored settings
+byte MEM_count;
+unsigned int MEM_offset;
 byte COM_dcc; //basic adres DCC receive
 //Declaraties deKoder
 volatile unsigned long DEK_Tperiode; //laatst gemeten tijd 
@@ -127,19 +129,13 @@ void setup() {
 
 void MEM_init() {
 	//runs once in startup and part of factory settings reload
-	byte ea; //ea=eeprom adres
+	unsigned int ea; //ea=eeprom adres
 	//reads and sets initial value from eeprom
 
 	SER_swm = EEPROM.read(100); //switch modes for servo's
 	COM_dcc = EEPROM.read(101); //dcc decoder adres (default 255)
 	MEM_reg = EEPROM.read(105);
-
-	//direction position at startup, not used, can be used for startup positions
-	ea = 0;
-	for (byte i = 0; i < 8; i++) {
-		SER_dir[i] = EEPROM.read(ea);
-		ea++;
-	}
+	
 	//Left position value array
 	ea = 10; //start adress left
 	for (byte i = 0; i < 8; i++) {
@@ -150,7 +146,6 @@ void MEM_init() {
 		}
 		ea = ea + 2;
 	}
-
 	//right position value array 
 	ea = 30; //start adres right
 	for (byte i = 0; i < 8; i++) {
@@ -191,41 +186,52 @@ void MEM_init() {
 		}
 		ea = ea + 2;
 	}
+	/*
+	To ensure that servo's will not start with uncontrolled fast movements, it is needed to store the current position of the servo's at all times. 
+	Routine here divides the 30bytes needed for this over 300 EEPROM bytes improving endurance of the EEPROM memorie to 1 million write cycles.
+	Further the update of the EEPROM will take place when all servo's are stopped to reduce the writing cycles further more.
+	If Arduino is turned on average 3 times a day, EEPROM should last for more the 100 years.
+	*/
 
+	MEM_count = EEPROM.read(106); 
+	if (MEM_count == 0xFF)MEM_count = 0; //initial value after eeprom clear
+	MEM_offset = 30 * MEM_count;
+
+	//directions, positions
+	ea = 200+MEM_offset;
+	for (byte i = 0; i < 8; i++) {
+		SER_dir[i] = EEPROM.read(ea);
+		ea++;
+	}
 	//(stored) last position restore
-	ea = 130;
+	ea = 209+MEM_offset;
 	//Serial.println("INIT");
 	for (byte i = 0; i < 8; i++) {
 		EEPROM.get(ea, SER_position[i]);
 		if (SER_position[i] == 0xFFFF) {
 			SER_position[i] = Pdef;
 		}
-		//Serial.println(SER_position[i]);
 		ea = ea + 2;
-	}
-	//Serial.println("");
-
+	}	
+	MEM_count++;
+	if (MEM_count > 10)MEM_count = 0; //0~9
+	MEM_offset = 30 * MEM_count; //new offset value
+	EEPROM.update(106, MEM_count); //Store new mem_count
+	MEM_position(); //store direction and positions in new EEPROM locations
 }
 void MEM_position() {
-	int temp;
-	//Serial.println("MEM");
-	//stores current position of the servo's
-	byte ea;
-	ea = 130;
+	unsigned int ea;
+	ea = 200+MEM_offset;
 	for (byte i = 0; i < 8; i++) {
-		EEPROM.put(ea, SER_position[i]);		
-		//Serial.println(SER_position[i]);
+		EEPROM.update(ea, SER_dir[i]);
+		ea++;
+	}
+	//store positions
+	ea = 209+MEM_offset;
+	for (byte i = 0; i < 8; i++) {
+		EEPROM.put(ea, SER_position[i]);
 		ea = ea + 2;
 	}
-	//Serial.println("");
-	
-	ea = 130;
-	for (byte i = 0; i < 8; i++) {
-		EEPROM.get(ea, temp);
-		//Serial.println(temp);
-		ea = ea + 2;
-	}
-	//Serial.println("");
 }
 void MEM_factory() {
 	//resets all EEPPROM to 0xFF
@@ -712,8 +718,8 @@ void SER_start(byte sv, byte target) {
 		SER_dir[sv] = 2;
 		break;
 	}
-	Serial.println(SER_position[servo]);
-	Serial.println(SER_target[servo]);
+	//Serial.println(SER_position[servo]);
+	//Serial.println(SER_target[servo]);
 }
 void SER_stop() { //called from ISR//
 	//PINB |= (1 << 4);
@@ -760,6 +766,14 @@ void SER_set() { //called from SER_run
 			if (SER_count[servo] > 4) {
 				SER_reg[servo] &= ~(1 << 0); //stop servo
 				SER_count[servo] = 0;
+				//check if any servo is running
+				for (byte i = 0; i < 8; i++) {
+					if (bitRead(SER_reg[i], 0) == true) {
+						sc++;
+						i = 10;
+					}
+				}
+				if (sc == 0) MEM_position(); //store position of the servo's
 			}
 		}
 		else if (SER_position[servo] > SER_target[servo]) {
@@ -1047,7 +1061,6 @@ void SW_exe(byte sw) {
 			break;
 		case 1:
 			LED_exe(1);
-			MEM_position();
 			COM_reg |= (1 << 1); //enable ledtimer, hoeft niet in 2 in 2 kom je alleen via 1
 			break;
 		case 2:
