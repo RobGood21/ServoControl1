@@ -7,6 +7,8 @@
  minder buffers
 */
 
+
+#include <FastLED.h>
 #include <EEPROM.h>
 # define Ldef 18000 //left postion default value
 # define Rdef 30000 //right position default value
@@ -14,6 +16,13 @@
 # define Pdef 24000 //Centre position default value
 # define LMdef 21000 //position left centre
 # define RMdef 27000 //position right centre
+//colors 
+#define red 0x880000;
+#define green 0x008800;
+#define blue 0x000088;
+#define yellow 0x665500;
+#define grey 0x040406;
+
 
 //declarations common
 byte COM_reg;
@@ -65,6 +74,8 @@ byte SW_last[8];
 byte COM_maxservo = 4; //not used??
 volatile byte sc;
 
+CRGB pix[8];
+
 
 byte LED_mode;
 unsigned long LED_time;
@@ -72,7 +83,7 @@ int LED_count[3]; //two counters for led effects and booleans in blink
 
 //declaration for testing can be removed (later)
 volatile unsigned long tijdmeting;
-volatile unsigned long gemeten;
+byte count = 0;
 
 void setup() {
 	//Serial.begin(9600);
@@ -99,8 +110,12 @@ void setup() {
 	PORTC |= (1 << 3); //pullup resistor pin A3
 */
 	PORTC = 0x0F;
-	//DeKoder part, interrupt on PIN2
+	//fastled part
 
+	FastLED.addLeds<NEOPIXEL, 3>(pix, 8);
+	FastLED.setBrightness(0x40); //0x40 = minimum 
+
+	//DeKoder part, interrupt on PIN2
 	DEK_Tperiode = micros();
 	EICRA |= (1 << 0);//EICRA – External Interrupt Control Register A bit0 > 1 en bit1 > 0 (any change)
 	EICRA &= ~(1 << 1);	//bitClear(EICRA, 1);
@@ -126,7 +141,6 @@ void setup() {
 	SHIFT();
 	delay(10);
 }
-
 void MEM_init() {
 	//runs once in startup and part of factory settings reload
 	unsigned int ea; //ea=eeprom adres
@@ -135,7 +149,7 @@ void MEM_init() {
 	SER_swm = EEPROM.read(100); //switch modes for servo's
 	COM_dcc = EEPROM.read(101); //dcc decoder adres (default 255)
 	MEM_reg = EEPROM.read(105);
-	
+
 	//Left position value array
 	ea = 10; //start adress left
 	for (byte i = 0; i < 8; i++) {
@@ -187,24 +201,28 @@ void MEM_init() {
 		ea = ea + 2;
 	}
 	/*
-	To ensure that servo's will not start with uncontrolled fast movements, it is needed to store the current position of the servo's at all times. 
+	To ensure that servo's will not start with uncontrolled fast movements, it is needed to store the current position of the servo's at all times.
 	Routine here divides the 30bytes needed for this over 300 EEPROM bytes improving endurance of the EEPROM memorie to 1 million write cycles.
 	Further the update of the EEPROM will take place when all servo's are stopped to reduce the writing cycles further more.
 	If Arduino is turned on average 3 times a day, EEPROM should last for more the 100 years.
 	*/
 
-	MEM_count = EEPROM.read(106); 
+	MEM_count = EEPROM.read(106);
 	if (MEM_count == 0xFF)MEM_count = 0; //initial value after eeprom clear
 	MEM_offset = 30 * MEM_count;
 
 	//directions, positions
-	ea = 200+MEM_offset;
+	ea = 200 + MEM_offset;
 	for (byte i = 0; i < 8; i++) {
 		SER_dir[i] = EEPROM.read(ea);
+		if (SER_dir[i] == 0xFF)SER_dir[i] = 4;
+		//set pixels colors
+		servo = i;
+		FL_set();
 		ea++;
 	}
 	//(stored) last position restore
-	ea = 209+MEM_offset;
+	ea = 209 + MEM_offset;
 	//Serial.println("INIT");
 	for (byte i = 0; i < 8; i++) {
 		EEPROM.get(ea, SER_position[i]);
@@ -212,7 +230,11 @@ void MEM_init() {
 			SER_position[i] = Pdef;
 		}
 		ea = ea + 2;
-	}	
+	}
+
+
+
+
 	MEM_count++;
 	if (MEM_count > 10)MEM_count = 0; //0~9
 	MEM_offset = 30 * MEM_count; //new offset value
@@ -221,13 +243,13 @@ void MEM_init() {
 }
 void MEM_position() {
 	unsigned int ea;
-	ea = 200+MEM_offset;
+	ea = 200 + MEM_offset;
 	for (byte i = 0; i < 8; i++) {
 		EEPROM.update(ea, SER_dir[i]);
 		ea++;
 	}
 	//store positions
-	ea = 209+MEM_offset;
+	ea = 209 + MEM_offset;
 	for (byte i = 0; i < 8; i++) {
 		EEPROM.put(ea, SER_position[i]);
 		ea = ea + 2;
@@ -718,6 +740,8 @@ void SER_start(byte sv, byte target) {
 		SER_dir[sv] = 2;
 		break;
 	}
+	pix[sv] = grey;
+	FastLED.show();
 	//Serial.println(SER_position[servo]);
 	//Serial.println(SER_target[servo]);
 }
@@ -757,6 +781,26 @@ void SER_run() {
 		TCCR1B = 2; //2 gives period of 6ms			
 	}
 }
+void FL_set() {
+	switch (SER_dir[servo]) {
+	case 0:
+		pix[servo] = green;
+		break;
+	case 1:
+		pix[servo] = yellow;
+		break;
+	case 2:
+		pix[servo] = blue;
+		break;
+	case 3:
+		pix[servo] = red;
+		break;
+	case 4:
+		pix[servo] = grey;
+		break;
+	}
+	FastLED.show();
+}
 
 void SER_set() { //called from SER_run 	
 	sc = 0;
@@ -766,6 +810,9 @@ void SER_set() { //called from SER_run
 			if (SER_count[servo] > 4) {
 				SER_reg[servo] &= ~(1 << 0); //stop servo
 				SER_count[servo] = 0;
+				//set pixel
+				FL_set();
+
 				//check if any servo is running
 				for (byte i = 0; i < 8; i++) {
 					if (bitRead(SER_reg[i], 0) == true) {
@@ -1374,12 +1421,17 @@ void loop() {
 	//SHIFT();
 
 
+
+
 	/*
 
 	//slowtimer
-	if (millis() - CLK_time > 500) {
-		//CLK_exe();
-		CLK_time = millis();
+	if (millis() - tijdmeting > 1000) {
+		tijdmeting = millis();
+		pix[count] = 0x050505;
+		count++;
+		if (count > 7)count = 0;
+		FastLED.show();
 	}
 	*/
 }
