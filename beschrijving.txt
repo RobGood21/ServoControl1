@@ -17,10 +17,10 @@ SER_dir 0=l 1=lm 2=rm 3=r other=4 (centre)
 
 SER_swm switch mode voor de servo's true=mono, toggles directions (default), false=dual only l en r seperate switch
 
-COM_reg
+COM_reg <>GPIOR2 gebruiken
 bit0 SER_run toggle between pauze and pulse output
 bit1 LED_blink enable true 
-bit2 
+bit2 Request fastled
 bit3
 bit4
 bit5 request confirmation(all servos switchmode)
@@ -37,4 +37,4 @@ bit5
 bit6
 bit7
 
-GPIOR0, GPIOR1, GPIOR2 gebruiken voor de uit te shiften bytes
+GPIOR0, GPIOR1 gebruiken voor de uit te shiften bytes

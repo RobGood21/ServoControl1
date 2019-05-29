@@ -10,6 +10,10 @@
 
 #include <FastLED.h>
 #include <EEPROM.h>
+
+//macro
+#define fastled COM_reg |=(1<<2);
+
 # define Ldef 18000 //left postion default value
 # define Rdef 30000 //right position default value
 # define Sdef 500 //speed servo default value
@@ -17,12 +21,14 @@
 # define LMdef 21000 //position left centre
 # define RMdef 27000 //position right centre
 //colors 
-#define red 0x880000;
-#define green 0x008800;
-#define blue 0x000088;
-#define yellow 0x665500;
-#define grey 0x040406;
-
+#define red 0x880000
+#define green 0x008800
+#define blue 0x0000A0
+#define yellow 0x666600
+#define grey 0x040604
+#define pink 0x801080
+#define lightgreen 0x105040
+#define oranje 0x993300;
 
 //declarations common
 byte COM_reg;
@@ -74,7 +80,7 @@ byte SW_last[8];
 byte COM_maxservo = 4; //not used??
 volatile byte sc;
 
-CRGB pix[8];
+CRGB pix[9];
 
 
 byte LED_mode;
@@ -112,7 +118,7 @@ void setup() {
 	PORTC = 0x0F;
 	//fastled part
 
-	FastLED.addLeds<NEOPIXEL, 3>(pix, 8);
+	FastLED.addLeds<NEOPIXEL, 3>(pix, 9);
 	FastLED.setBrightness(0x40); //0x40 = minimum 
 
 	//DeKoder part, interrupt on PIN2
@@ -213,12 +219,14 @@ void MEM_init() {
 
 	//directions, positions
 	ea = 200 + MEM_offset;
+	pix[8] = 0x000404;
 	for (byte i = 0; i < 8; i++) {
 		SER_dir[i] = EEPROM.read(ea);
 		if (SER_dir[i] == 0xFF)SER_dir[i] = 4;
 		//set pixels colors
 		servo = i;
-		FL_set();
+		PIX_set(servo);
+		//FastLED.show();
 		ea++;
 	}
 	//(stored) last position restore
@@ -231,9 +239,6 @@ void MEM_init() {
 		}
 		ea = ea + 2;
 	}
-
-
-
 
 	MEM_count++;
 	if (MEM_count > 10)MEM_count = 0; //0~9
@@ -692,6 +697,8 @@ void SER_reset() {
 	SER_r[SER_last] = Rdef;
 	SER_speed[SER_last] = Sdef;
 	SER_swm |= (1 << SER_last);
+	SER_count[0] = 0;
+	pix[7] = red;
 }
 
 void SER_start(byte sv, byte target) {
@@ -740,8 +747,18 @@ void SER_start(byte sv, byte target) {
 		SER_dir[sv] = 2;
 		break;
 	}
-	pix[sv] = grey;
-	FastLED.show();
+	switch (COM_mode) {
+	case 0:
+		pix[sv] = grey;
+		break;
+	case 1:
+		pix[0] = grey;
+		break;
+	case 2:
+		break;
+	}
+	fastled;
+	//FastLED.show();
 	//Serial.println(SER_position[servo]);
 	//Serial.println(SER_target[servo]);
 }
@@ -781,25 +798,26 @@ void SER_run() {
 		TCCR1B = 2; //2 gives period of 6ms			
 	}
 }
-void FL_set() {
-	switch (SER_dir[servo]) {
+void PIX_set(byte srv) {
+	byte px = 0;
+	if (COM_mode == 0)px = srv;
+	switch (SER_dir[srv]) {
 	case 0:
-		pix[servo] = green;
+		pix[px] = green;
 		break;
 	case 1:
-		pix[servo] = yellow;
+		pix[px] = yellow;
 		break;
 	case 2:
-		pix[servo] = blue;
+		pix[px] = blue;
 		break;
 	case 3:
-		pix[servo] = red;
+		pix[px] = red;
 		break;
 	case 4:
-		pix[servo] = grey;
+		pix[px] = grey;
 		break;
 	}
-	FastLED.show();
 }
 
 void SER_set() { //called from SER_run 	
@@ -810,8 +828,12 @@ void SER_set() { //called from SER_run
 			if (SER_count[servo] > 4) {
 				SER_reg[servo] &= ~(1 << 0); //stop servo
 				SER_count[servo] = 0;
-				//set pixel
-				FL_set();
+				//set pixel			
+
+				//Serial.println("hier");
+				PIX_set(servo);
+				fastled;
+				//FastLED.show();
 
 				//check if any servo is running
 				for (byte i = 0; i < 8; i++) {
@@ -882,6 +904,7 @@ void SER_set() { //called from SER_run
 	*/
 	}
 	else { //servo not active
+		//FastLED.show();
 		if (bitRead(SER_reg[servo], 1) == true) {
 
 			for (byte i = 0; i < 8; i++) {
@@ -939,7 +962,7 @@ void SW_read() {
 		}
 	}
 }
-void LED_exe(byte mode) {
+void LED_exe(byte mode) {  //KAN STRAKS WEG//
 	switch (mode) {
 	case 0:
 		PORTB &= ~(1 << 4);
@@ -962,9 +985,38 @@ void LED_timer() {
 		LED_blink();
 	}
 }
-
+void LED_pix(byte mode) {
+	switch (mode) {
+	case 0:
+		for (byte i = 0; i < 8; i++) {
+			PIX_set(i);
+		}
+		pix[8] = grey;
+		break;
+	case 1:
+		PIX_set(SER_last);
+		pix[1] = lightgreen;
+		pix[2] = lightgreen;
+		pix[3] = pink;
+		pix[4] = pink;
+		if (bitRead(SER_swm, SER_last) == true) {
+			pix[5] = yellow;
+		}
+		else {
+			pix[5] = blue;
+		}
+		pix[6] = oranje;
+		pix[7] = red;
+		pix[8] = green;
+		break;
+	case 2:
+		break;
+	}
+	//FastLED.show();
+}
 void LED_blink() {
 	//creates all kind of flashing leds effects
+	boolean renew;
 	switch (LED_mode) {
 	case 0:
 		//do nothing
@@ -979,10 +1031,15 @@ void LED_blink() {
 		break;
 	case 2: //servo reset wait for confirmation
 		LED_count[0]++;
-		if (LED_count[0] == 3) 	PORTB |= (1 << 5);
+		if (LED_count[0] == 3) {
+			pix[7] = red;
+			renew = true;
+		}
+
 		if (LED_count[0] == 4) {
 			LED_count[0] = 0;
-			PORTB &= ~(1 << 5);
+			pix[7] = 0x0;
+			renew = true;
 		}
 		break;
 	case 3://DCC decoder adress set, wait for command
@@ -1054,64 +1111,69 @@ void LED_blink() {
 			if (LED_count[2] == 0)LED_mode = 0;
 		}
 		break;
-	case 10: //confirm switch mode dual, green led flash 4x
+	case 10://mirror positions, flash red pix 6
 		LED_count[0]++;
-		if (LED_count[0] == 3) {
-			PORTB |= (1 << 5);
-		}
-
-		if (LED_count[0] == 6) {
-			PORTB &= ~(1 << 5);
-			LED_count[1]++;
+		if (LED_count[0] == 1)pix[6] = 0x0;
+		if (LED_count[0] == 4) {
 			LED_count[0] = 0;
-			if (LED_count[1] > 8) {
+			pix[6] = blue;
+			LED_count[1]++;
+			if (LED_count[1] > 4) {
 				LED_count[1] = 0;
 				LED_mode = 0;
+				pix[6] = oranje;
 			}
-
 		}
+		renew = true;
 		break;
-	case 11: //confirm switch mode single, green led flash once
+	case 11:
 		LED_count[0]++;
-		if (LED_count[0] == 5) PORTB |= (1 << 5);
-		if (LED_count[0] == 50) {
-			PORTB &= ~(1 << 5);
-			LED_count[0] = 0;
-			LED_mode = 0;
+
+		if (LED_count[0] == 3) {
+			pix[LED_count[2]] = 0x0;
+			renew = true;
 		}
+		if (LED_count[0] == 6) {
+			pix[LED_count[2]] = lightgreen;
+			LED_count[0] = 0;
+			LED_count[1]++;
+			if (LED_count[1] > 4) {
+				LED_count[1] = 0;
+				LED_count[2] = 0;
+				LED_mode = 0;
+			}
+			renew = true;
+		}
+		break;
+	case 20:
 
 		break;
-	case 20: //confirm any button pressed
-		LED_count[0]++;
-		if (LED_count[0] == 2)PORTB |= (1 << 5);
-		if (LED_count[0] == 4) {
-			PORTB &= ~(1 << 5);
-			LED_count[0] = 0;
-			LED_mode = 0;
-		}
-		break;
+
+
 	default:
 		//do nothing
 		break;
 	}
+	//if (renew == true)FastLED.show();
 }
 void SW_exe(byte sw) {
 	if (sw == 16) {
 		COM_mode++;
 		if (COM_mode > 2)COM_mode = 0;
+
 		switch (COM_mode) {
 		case 0:
 			COM_reg &= ~B11100010;
 			LED_mode = 0;
 			MEM_change(); //store made changes
-			LED_exe(0);
+			LED_pix(0);
 			break;
 		case 1:
-			LED_exe(1);
+			LED_pix(1);
 			COM_reg |= (1 << 1); //enable ledtimer, hoeft niet in 2 in 2 kom je alleen via 1
 			break;
 		case 2:
-			LED_exe(2);
+			pix[8] = red;
 			break;
 		default:
 			break;
@@ -1133,15 +1195,13 @@ void SW_exe(byte sw) {
 	//Serial.print("switch: ");
 	//Serial.println(sw);
 	//Serial.println("");
+	//FastLED.show();
 }
-void SW_mode1(byte sw) {
+void SW_mode1(byte sw) {//handles switche in program mode 1, servo is last by push buttons controlled servo
 	byte td = SER_reg[SER_last]; //store register of active servo
 	byte bit = sw;
 	int temp;
 	if (bit > 3)bit = bit - 4;
-	//handles switche in program mode 1
-	//servo is last by push buttons controlled servo
-	LED_mode = 20; //flash green for confirmation keypress
 	switch (sw) {
 	case 0: //start servo
 		if (bitRead(MEM_reg, 1) == true) { //twee standen servo
@@ -1172,14 +1232,17 @@ void SW_mode1(byte sw) {
 		}
 		SER_start(SER_last, temp);
 		break;
-
 	case 1: //move counter clockwise
 		SER_pchng(200);
 		SER_reg[SER_last] |= (1 << 1); //request servo start
+		//LED_mode = 11;
+		//LED_count[2] = 1;
 		break;
 	case 2: //move clockwise
 		SER_pchng(-200);
 		SER_reg[SER_last] |= (1 << 1); //request servo start
+		//LED_mode = 11;
+		//LED_count[2] = 2;
 		break;
 
 	case 3: //decrease speed
@@ -1192,10 +1255,24 @@ void SW_mode1(byte sw) {
 		break;
 	case 9: //switch mode
 		SER_swm ^= (1 << SER_last); //toggle swich mode
-		LED_mode = 10;
-		if (bitRead(SER_swm, SER_last) == true)LED_mode = 11;
+		//LED_mode = 10;
+		if (bitRead(SER_swm, SER_last) == true) {
+			//LED_mode = 11;
+			pix[5] = yellow;
+		}
+		else {
+			pix[5] = blue;
+		}
 		break;
-	case 10:
+	case 10: //mirror position l<>r lm<>rm
+		LED_mode = 10;
+		temp = SER_l[SER_last];
+		SER_l[SER_last] = SER_r[SER_last];
+		SER_r[SER_last] = temp;
+		temp = SER_lm[SER_last];
+		SER_lm[SER_last] = SER_rm[SER_last];
+		SER_rm[SER_last] = temp;
+
 		break;
 	case 11: //reset this servo to default values
 		if (bitRead(COM_reg, 6) == false) {
@@ -1204,10 +1281,12 @@ void SW_mode1(byte sw) {
 		}
 		else {
 			COM_reg &= ~(1 << 6);
+			LED_mode = 0;
 			SER_reset();
 		}
 		break;
 	}
+	FastLED.show();
 }
 void SW_mode2(byte sw) {
 	//handles switches in program mode 2
@@ -1419,8 +1498,10 @@ void loop() {
 	DEK_DCCh();
 	if (bitRead(COM_reg, 1) == true)LED_timer(); //enabled in program modes 1 and 2, GPIOR2 ???
 	//SHIFT();
-
-
+	if (bitRead(COM_reg, 2) == true) {
+		FastLED.show();
+		COM_reg &= ~(1 << 2);
+	}
 
 
 	/*
