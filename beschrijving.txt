@@ -13,8 +13,6 @@ bit7
 
 SER_dir 0=l 1=lm 2=rm 3=r other=4 (centre)
 
-
-
 SER_swm switch mode voor de servo's true=mono, toggles directions (default), false=dual only l en r seperate switch
 
 COM_reg <>GPIOR2 gebruiken
@@ -30,7 +28,7 @@ bit7 adress programming, waiting for DCC command (true)
 MEM_reg #105 EEPROM
 bit0 switchmode 0(true); mode 1(false) 
 bit1 Afstelling 2 standen (default) true, of 4 standen false
-bit2 DCC 8dcc adressen (true, default), 4 adressen (false)
+bit2 DCC 8dcc adressen (false), 4 adressen (true, default)
 bit3
 bit4
 bit5
