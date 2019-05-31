@@ -20,11 +20,13 @@
 # define LMdef 21000 //position left centre
 # define RMdef 27000 //position right centre
 //colors 
+
+
 #define red 0x880000
 #define green 0x008800
 #define blue 0x0000A0
 #define yellow 0x666600
-#define grey 0x040604
+#define grey 0x101010;
 #define pink 0x801080
 #define lightgreen 0x005030
 #define oranje 0x993300;
@@ -115,10 +117,8 @@ void setup() {
 	PORTC |= (1 << 3); //pullup resistor pin A3
 */
 	PORTC = 0x0F;
-	//fastled part
 
-	FastLED.addLeds<NEOPIXEL, 3>(pix, 9);
-	FastLED.setBrightness(0x40); //0x40 = minimum 
+	
 
 	//DeKoder part, interrupt on PIN2
 	DEK_Tperiode = micros();
@@ -142,8 +142,25 @@ void setup() {
 		//temp
 	LED_mode = 0;
 	COM_mode = 0;
+
+	//fastled part must be after reading EEPROM
+	FastLED.addLeds<WS2812, 3, RGB>(pix, 9);
+	if (bitRead(MEM_reg, 3) == true) {
+		FastLED.addLeds<WS2812, 4, GRB>(pix, 8);
+	}
+	else {
+		FastLED.addLeds<WS2812, 4, RGB>(pix, 8);
+	}
+	
+
+	//FastLED.setBrightness(0x40); //0x40 = minimum 
+	
+	
 	SHIFT();
-	delay(10);
+
+
+
+	//delay(10);
 }
 void MEM_init() {
 	//runs once in startup and part of factory settings reload
@@ -676,7 +693,7 @@ void APP_function(boolean type, int adres, int decoder, int channel, boolean por
 						SER_start(dcc, 2);
 					}
 				}
-				else if (dcc < 16 & bitRead(MEM_reg,2)==false) {
+				else if (dcc < 16 & bitRead(MEM_reg, 2) == false) {
 					if (port == true) {
 						SER_start(dcc - 8, 4);
 					}
@@ -832,8 +849,8 @@ void SER_set() { //called from SER_run
 				SER_count[servo] = 0;
 				//set pixel			
 				if (COM_mode != 2) {
-				PIX_set(servo);
-				fastled;
+					PIX_set(servo);
+					fastled;
 				}
 				//check if any servo is running
 				for (byte i = 0; i < 8; i++) {
@@ -1035,7 +1052,13 @@ void LED_pix(byte mode) {
 
 		pix[2] = grey;
 		pix[3] = grey;
-		pix[4] = grey;
+		if (bitRead(MEM_reg, 3) == true) {
+			pix[4] = green;
+		}
+		else {
+			pix[4] = red;
+		}
+
 
 		if (bitRead(MEM_reg, 2) == true) {
 			pix[5] = lightgreen;
@@ -1387,7 +1410,15 @@ void SW_mode2(byte sw) {
 		}
 		fastled;
 		break;
-
+	case 8: //set color scene for external neopixels
+		MEM_reg ^= (1 << 3);
+		if (bitRead(MEM_reg, 3) == true) {
+			pix[4] = green;
+		}
+		else {
+			pix[4] = red;
+		}
+		break;
 	case 9: //set two decoder adresses or 4 decoder adresses (4 positions by DCC commmands
 		MEM_reg ^= (1 << 2);
 		if (bitRead(MEM_reg, 2) == true) {

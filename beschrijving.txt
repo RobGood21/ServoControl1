@@ -29,7 +29,7 @@ MEM_reg #105 EEPROM
 bit0 switchmode 0(true); mode 1(false) 
 bit1 Afstelling 2 standen (default) true, of 4 standen false
 bit2 DCC 8dcc adressen (false), 4 adressen (true, default)
-bit3
+bit3 extern Neopixes RGB volgorde RGB (default) true, GRB false
 bit4
 bit5
 bit6
