@@ -1,4 +1,18 @@
-dServo Control beschrijving
+Servo Control beschrijving
+
+EEPROM
+100 SER_SWM switch mode servo's
+101 COM_DCC  adres decoder basis
+102 MEM_bright helderheid fastled
+105 MEM_reg opgeslagen register diverse booleans
+106 MEM_count divides frequent used EEPROM cells to raise endurance of EEPROM
+
+010~026 left postion
+030~046 right porsition
+050~066 speed servo's
+070~086 Left middle postion
+110~126 Right middle position
+200~500 current position store of servo's (10x30 cells)
 
 
 SER_reg
