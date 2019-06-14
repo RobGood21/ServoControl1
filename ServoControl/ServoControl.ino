@@ -1,10 +1,20 @@
 /*
- Name:		ServoControl.ino
+ Name:		SerVoControl V1.01
  Created:	4/30/2019 3:59:50 PM
  Author:	Rob Antonisse
 
  gebruikte deKOder heeft verschillende aanpassingen
  minder buffers
+ filter voor herhaalde commandoos
+
+ Versions:
+ V1.01 domo development
+ V1.02 14-6-2019
+	fixed
+	PortC added pull ups to all ports, solves rndom movements of switch status
+	PortB 0 and PortB 1 switched, wrong in eagle design, fixed.
+
+
 */
 
 #include <FastLED.h>
@@ -93,14 +103,19 @@ int LED_count[3]; //two counters for led effects and booleans in blink
 //declaration for testing can be removed (later)
 volatile unsigned long tijdmeting;
 
-
 void setup() {
-	//Serial.begin(9600);
+
+	Serial.begin(9600);
 	//shiftregisters init	
+	DDRB |= (1 << 3); //pin 11 OE (output enabled) van de shifts
+	PORTB |=(1 << 3);
+
 	DDRB |= (1 << 0); //pin 8 serial data out, set as output
 	DDRB |= (1 << 1); //pin 9 Rclock, latch set as output
 	DDRB |= (1 << 2); //pin 10 shift clock set as output	
-	PORTC = 0x0F; //pull-up resistors A0~A4
+	DDRC = 0x0;
+	PORTC = 0xFF; //pull-up resistors to port C
+
 	//DeKoder part, interrupt on PIN2
 	DEK_Tperiode = micros();
 	EICRA |= (1 << 0);//EICRA – External Interrupt Control Register A bit0 > 1 en bit1 > 0 (any change)
@@ -109,7 +124,7 @@ void setup() {
 	TCCR1A = 0;
 	TIMSK1 |= (1 << 1); //enable interupt
 	MEM_init();
-	DDRB |= (1 << 3); //pin 11 OE (output enabled) van de shifts
+	
 	LED_mode = 0;
 	COM_mode = 0;
 
@@ -121,7 +136,10 @@ void setup() {
 	else {
 		FastLED.addLeds<WS2812, 4, RGB>(pix, 8);
 	}
+
+
 	SHIFT();
+	PORTB &= ~(1 << 3);
 }
 void MEM_init() {
 	//runs once in startup and part of factory settings reload
@@ -745,7 +763,6 @@ void SER_start(byte sv, byte target) {
 	//Serial.println(SER_target[servo]);
 }
 void SER_stop() { //called from ISR//
-	//PINB |= (1 << 4);
 	GPIOR0 &= ~(1 << servo); //reset puls servo
 	TCCR1B = 0; //stop timer 2	
 	SHIFT();
@@ -901,12 +918,11 @@ void SER_set() { //called from SER_run
 	GPIOR1 |= (1 << 0);
 	if (GPIOR1 == 0xFF)GPIOR1 &= ~(1 << 0);
 }
-
 void SHIFT() {
 	SHIFT1();
 	SHIFT0();
-	PINB |= (1 << 2);
-	PINB |= (1 << 2);	
+	PINB |= (1 << 1); //1 en 2 verwisseld
+	PINB |= (1 << 1);	
 	SW_read();//read switches
 }
 void SW_read() {
@@ -1431,8 +1447,8 @@ void SHIFT0() {
 	for (byte i = 7; i < 8;) {
 		PORTB &= ~(1 << 0);
 		if (bitRead(GPIOR0, i) == true) PINB |= (1 << 0);
-		PINB |= (1 << 1);
-		PINB |= (1 << 1);
+		PINB |= (1 << 2); //was 1
+		PINB |= (1 << 2);
 		i--;
 	}
 }
@@ -1440,12 +1456,11 @@ void SHIFT1() {
 	for (byte i = 7; i < 8;) {
 		PORTB &= ~(1 << 0);
 		if (bitRead(GPIOR1, i) == true) PINB |= (1 << 0);
-		PINB |= (1 << 1);
-		PINB |= (1 << 1);
+		PINB |= (1 << 2);
+		PINB |= (1 << 2);
 		i--;
 	}
 }
-
 void loop() {
 	flc++;
 	DEK_DCCh();
