@@ -9,10 +9,11 @@
 
  Versions:
  V1.01 domo development
- V1.02 14-6-2019
-	fixed
-	PortC added pull ups to all ports, solves rndom movements of switch status
+ V1.02 16-6-2019
+	bugs fixed:
+	PortC added pull ups to all ports, solves random movements of switch status
 	PortB 0 and PortB 1 switched, wrong in eagle design, fixed.
+	led blink counters no reset after factory reset
 
 
 */
@@ -33,16 +34,15 @@
 
 
 #define red 0x0A0000*MEM_bright
-#define green 0x000A02*MEM_bright
+#define green 0x000A00*MEM_bright
 #define blue 0x00000A*MEM_bright
-#define yellow 0x060700 *MEM_bright
+#define yellow 0x070400 *MEM_bright
 #define grey 0x020202*MEM_bright/2
 #define pink 0x0A000A*MEM_bright
-#define lightgreen 0x000609*MEM_bright
+#define lightgreen 0x010705*MEM_bright
 #define oranje 0x090402*MEM_bright
 
 //declarations common
-//byte GPIOR2;
 byte COM_mode;
 byte MEM_reg; //EEPROM #105 register with to be restored settings
 byte MEM_count;
@@ -1171,8 +1171,7 @@ void SW_exe(byte sw) {
 			break;
 		case 1:
 			LED_pix(1);
-			GPIOR2 |= (1 << 1); //enable ledtimer, hoeft niet in 2 in 2 kom je alleen via 1
-
+			GPIOR2 |= (1 << 1); //enable ledtimer
 			break;
 		case 2:
 			LED_pix(2);
@@ -1377,6 +1376,10 @@ void SW_mode2(byte sw) {
 			LED_mode = 0;
 			COM_mode = 0;
 			LED_pix(0);
+			LED_count[0] = 0;
+			LED_count[1] = 0;
+			LED_count[2] = 0;
+
 		}
 		break;
 	}
