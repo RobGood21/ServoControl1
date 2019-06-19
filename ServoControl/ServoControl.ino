@@ -1145,9 +1145,10 @@ void LED_blink() {
 			LED_count[0] = 0;
 			LED_count[1]++;
 			if (LED_count[1] > 2) {
-				LED_count[1] = 0;
-				LED_count[2] = 0;
-				LED_mode = 0;
+				clearcounts();
+				//LED_count[1] = 0;
+				//LED_count[2] = 0;
+				//LED_mode = 0;
 			}
 			fastled;
 		}
@@ -1159,6 +1160,7 @@ void LED_blink() {
 }
 void SW_exe(byte sw) {
 	if (sw == 16) {
+		clearcounts();
 		COM_mode++;
 		if (COM_mode > 2)COM_mode = 0;
 
@@ -1175,7 +1177,6 @@ void SW_exe(byte sw) {
 			break;
 		case 2:
 			LED_pix(2);
-
 			break;
 		default:
 			break;
@@ -1376,13 +1377,17 @@ void SW_mode2(byte sw) {
 			LED_mode = 0;
 			COM_mode = 0;
 			LED_pix(0);
-			LED_count[0] = 0;
-			LED_count[1] = 0;
-			LED_count[2] = 0;
-
+			clearcounts();
 		}
 		break;
 	}
+}
+void clearcounts() {
+	LED_count[0] = 0;
+	LED_count[1] = 0;
+	LED_count[2] = 0;
+	LED_mode = 0;
+	GPIOR2 &= ~(1 << 6);
 }
 void SER_pchng(int mut) {
 
