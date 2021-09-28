@@ -937,10 +937,7 @@ void SHIFT() {
 	else {
 		SW_count++;
 	}
-
-
-
-
+	   	 
 }
 void SW_read() {
 	//reads switches
