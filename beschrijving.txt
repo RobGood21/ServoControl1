@@ -1,4 +1,5 @@
 Servo Control beschrijving
+Huidige versie V3.01 van 20nov2021 is ServoControl.INO let op dat je de goede versie neemt!
 
 EEPROM
 100 SER_SWM switch mode servo's

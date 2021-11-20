@@ -1,7 +1,11 @@
 /*
- Name:		SerVoControl V3.01
- Created:	20nov2011
+ Name:		SerVoControl V1.01
+ Created:	4/30/2019 3:59:50 PM
  Author:	Rob Antonisse
+
+ gebruikte deKOder heeft verschillende aanpassingen
+ minder buffers
+ filter voor herhaalde commandoos
 
  Versions:
  V1.01 domo development
@@ -11,12 +15,6 @@
 	PortB 0 and PortB 1 switched, wrong in eagle design, fixed.
 	led blink counters no reset after factory reset
 
-	V2.0 16aug2021
-Als knop is ingedrukt tijdens powerup, wordt het een chaos veroorzaakt door ongewenste schakelaar acties.
-In Shift() counter toegevoegd die disabled switchs acties in powerup
-
-V3.01  20november2021
-DCC decoder wisselen voor de NMRA decoder
 
 */
 
@@ -101,10 +99,11 @@ byte flc; //fastled count
 byte LED_mode;
 unsigned long LED_time;
 int LED_count[3]; //two counters for led effects and booleans in blink
-byte  SW_count = 0;
+
+//declaration for testing can be removed (later)
+volatile unsigned long tijdmeting;
 
 void setup() {
-
 	Serial.begin(9600);
 	//shiftregisters init	
 	DDRB |= (1 << 3); //pin 11 OE (output enabled) van de shifts
@@ -139,7 +138,6 @@ void setup() {
 
 
 	SHIFT();
-
 	PORTB &= ~(1 << 3);
 }
 void MEM_init() {
@@ -924,16 +922,7 @@ void SHIFT() {
 	SHIFT0();
 	PINB |= (1 << 1); //1 en 2 verwisseld
 	PINB |= (1 << 1);
-	
-
-	//tijdens powerup geen switches lezen (V2.0)
-	if (SW_count > 100) {
-		SW_read();//read switches
-	}
-	else {
-		SW_count++;
-	}
-	   	 
+	SW_read();//read switches
 }
 void SW_read() {
 	//reads switches
@@ -947,7 +936,7 @@ void SW_read() {
 			changed = read ^ SW_last[i];
 			if (changed > 0) {
 				SW_last[i] = read;
-
+				/*
 				Serial.println("-------");
 				Serial.print("ch: ");
 				Serial.println(changed);
@@ -957,7 +946,7 @@ void SW_read() {
 
 				Serial.print("read: ");
 				Serial.println(read);
-
+*/
 				for (byte b = 0; b < 8; b++) {
 					if (bitRead(changed, b) == true & bitRead(read, b) == false) SW_exe((i * 4) + (b));
 				}
@@ -1169,7 +1158,7 @@ void LED_blink() {
 	}
 }
 void SW_exe(byte sw) {
-	if (sw == 16) { //program button
+	if (sw == 16) {
 		clearcounts();
 		COM_mode++;
 		if (COM_mode > 2)COM_mode = 0;
@@ -1192,7 +1181,7 @@ void SW_exe(byte sw) {
 			break;
 		}
 	}
-	else { //0~15 schakelaars ingedrukt.
+	else {
 
 		switch (COM_mode) {
 		case 0:
@@ -1482,14 +1471,10 @@ void SHIFT1() {
 void loop() {
 	flc++;
 	DEK_DCCh();
-
 	if (bitRead(GPIOR2, 1) == true)LED_timer(); //enabled in program modes 1 and 2, GPIOR2 ???
 	//SHIFT();
 	if (bitRead(GPIOR2, 2) == true & flc == 0) {
 		FastLED.show();
 		GPIOR2 &= ~(1 << 2);
 	}
-
-
-
 }

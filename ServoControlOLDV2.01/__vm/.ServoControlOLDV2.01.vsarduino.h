@@ -88,6 +88,6 @@ typedef void *__builtin_va_list;
 #define pgm_read_float(address_short) float()
 #define pgm_read_ptr(address_short)   short()
 
-#include "ServoControlOLD.ino"
+#include "ServoControlOLDV2.01.ino"
 #endif
 #endif

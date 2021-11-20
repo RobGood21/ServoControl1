@@ -10,7 +10,9 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution 
 		beschrijving.txt = beschrijving.txt
 	EndProjectSection
 EndProject
-Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "ServoControl_V1", "Sketch1\Sketch1.vcxproj", "{F818F653-2CFE-4FD5-8593-04E0117207C4}"
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "ServoControlOLD", "Sketch1\Sketch1.vcxproj", "{F818F653-2CFE-4FD5-8593-04E0117207C4}"
+EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "ServoControlOLDV2.01", "ServoControlOLDV2.01\ServoControlOLDV2.01.vcxproj", "{04DA0BDB-313C-4A2D-BD5A-7C097C89A5AB}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -26,6 +28,10 @@ Global
 		{F818F653-2CFE-4FD5-8593-04E0117207C4}.Debug|x86.Build.0 = Debug|Win32
 		{F818F653-2CFE-4FD5-8593-04E0117207C4}.Release|x86.ActiveCfg = Release|Win32
 		{F818F653-2CFE-4FD5-8593-04E0117207C4}.Release|x86.Build.0 = Release|Win32
+		{04DA0BDB-313C-4A2D-BD5A-7C097C89A5AB}.Debug|x86.ActiveCfg = Debug|Win32
+		{04DA0BDB-313C-4A2D-BD5A-7C097C89A5AB}.Debug|x86.Build.0 = Debug|Win32
+		{04DA0BDB-313C-4A2D-BD5A-7C097C89A5AB}.Release|x86.ActiveCfg = Release|Win32
+		{04DA0BDB-313C-4A2D-BD5A-7C097C89A5AB}.Release|x86.Build.0 = Release|Win32
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
