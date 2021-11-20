@@ -16,12 +16,15 @@ Als knop is ingedrukt tijdens powerup, wordt het een chaos veroorzaakt door onge
 In Shift() counter toegevoegd die disabled switchs acties in powerup
 
 V3.01  20november2021
-DCC decoder wisselen voor de NMRA decoder
+DCC decoder gewisseld voor de NMRA decoder heeft 1622 meer bytes nodig, en 1 byte minder geheugen
 
 */
 
+#include <NmraDcc.h>
 #include <FastLED.h>
 #include <EEPROM.h>
+
+NmraDcc  Dcc;
 
 //macro
 #define fastled GPIOR2 |=(1<<2);
@@ -52,30 +55,9 @@ unsigned int MEM_offset;
 byte MEM_bright = 1;
 
 byte COM_dcc; //basic adres DCC receive
-//Declaraties deKoder
-volatile unsigned long DEK_Tperiode; //laatst gemeten tijd 
-volatile unsigned int DEK_duur; //gemeten duur van periode tussen twee interupts
-boolean DEK_Monitor = false; //shows DCC commands as bytes
-byte DEK_Reg; //register voor de decoder 
-byte DEK_Status = 0;
-byte DEK_byteRX[6]; //max length commandoos for this decoder 6 bytes (5x data 1x error check)
-byte DEK_countPA = 0; //counter for preample
-byte DEK_BufReg[6]; //registerbyte for 12 command buffers //bit7= free (false) bit0= CV(true)
-byte DEK_Buf0[6];
-byte DEK_Buf1[6];
-byte DEK_Buf2[6];
-byte DEK_Buf3[6];
-byte DEK_Buf4[6];
-byte DEK_Buf5[6];
-
-//declarations shiftregisters
-//byte SH_byte[2]; //2 bytes to be shifted out
-//used GPIOR0 GPIOR1 and GPIOR2
-
 byte SH_bitcount;
 byte SH_bytecount;
 byte SH_fase;
-
 //declarations servo
 byte servo; //adresses current handled servo in SER_exe
 unsigned int SER_l[8]; //EEPROM 10~25 puls width left
@@ -104,9 +86,12 @@ int LED_count[3]; //two counters for led effects and booleans in blink
 byte  SW_count = 0;
 
 void setup() {
-
 	Serial.begin(9600);
-	//shiftregisters init	
+	//constructer NMRA decoder
+	Dcc.pin(0, 2, 1); //interrupt number 0; pin 2; pullup to pin2
+	Dcc.init(MAN_ID_DIY, 10, 0b10000000, 0); 
+	//bit7 true maakt accessoire decoder, bit6 false geeft decoder adres of dccadres
+
 	DDRB |= (1 << 3); //pin 11 OE (output enabled) van de shifts
 	PORTB |= (1 << 3);
 
@@ -117,14 +102,13 @@ void setup() {
 	PORTC = 0xFF; //pull-up resistors to port C
 
 	//DeKoder part, interrupt on PIN2
-	DEK_Tperiode = micros();
+	//DEK_Tperiode = micros();
 	EICRA |= (1 << 0);//EICRA – External Interrupt Control Register A bit0 > 1 en bit1 > 0 (any change)
 	EICRA &= ~(1 << 1);	//bitClear(EICRA, 1);
 	EIMSK |= (1 << INT0);//enable interrupt
 	TCCR1A = 0;
 	TIMSK1 |= (1 << 1); //enable interupt
 	MEM_init();
-
 	LED_mode = 0;
 	COM_mode = 0;
 
@@ -136,10 +120,7 @@ void setup() {
 	else {
 		FastLED.addLeds<WS2812, 4, RGB>(pix, 8);
 	}
-
-
 	SHIFT();
-
 	PORTB &= ~(1 << 3);
 }
 void MEM_init() {
@@ -305,324 +286,24 @@ void MEM_change() {
 		ea = ea + 2;
 	}
 }
-ISR(INT0_vect) { //syntax voor een ISR
-//isr van PIN2
-	//DEK_Reg fase van bit ontvangst
-	//bit 0= bitpart ok (1) of failed(0)
-	//bit1= truepart 
-	//bit2=falsepart
-	//bit3= received bit true =true false =false
-	//bit4=restart, begin, failed as true
-	cli();
-	DEK_duur = (micros() - DEK_Tperiode);
-	DEK_Tperiode = micros();
-	if (DEK_duur > 50) {//50  ****************
-		if (DEK_duur < 62) { //62 **************
-			DEK_Reg |= (1 << 0); //bitSet(DekReg, 0);
-
-			if (bitRead(DEK_Reg, 1) == false) {
-				DEK_Reg &= ~(1 << 2); //bitClear(DekReg, 2);
-				DEK_Reg |= (1 << 1);
-			}
-			else { //received full true bit
-				DEK_Reg |= (1 << 3);
-				DEK_BitRX();
-				DEK_Reg &= ~(1 << 2);//bitClear(DekReg, 2);
-				DEK_Reg &= ~(1 << 1); //bitClear(DekReg, 1);
-			}
-		}
-		else {
-			if (DEK_duur > 106) { //106 ***********************
-
-				if (DEK_duur < 124) { //124 ***********preferred 118 6us extra space in false bit
-					DEK_Reg |= (1 << 0); //bitSet(DekReg, 0);
-					if (bitRead(DEK_Reg, 2) == false) {
-						DEK_Reg &= ~(1 << 1); //bitClear(DekReg, 1);
-						DEK_Reg |= (1 << 2);  //bitSet(DekReg, 2);
-					}
-					else { //received full false bit
-						DEK_Reg &= ~(1 << 3); //bitClear(DekReg, 3);
-						DEK_BitRX();
-						DEK_Reg &= ~(1 << 2);//bitClear(DekReg, 2);
-						DEK_Reg &= ~(1 << 1); //bitClear(DekReg, 1);
-					}
-				}
-			}
-		}
-	}
-	sei();
-}
 ISR(TIMER1_COMPA_vect) {
 	SER_stop();
 }
-void DEK_begin() {//runs when bit is corrupted, or command not correct
-	//lesscount++;
-	DEK_countPA = 0;
-	DEK_Reg = 0;
-	DEK_Status = 0;
-	for (int i = 0; i < 6; i++) {
-		DEK_byteRX[i] = 0; //reset receive array
-	}
+void notifyDccAccTurnoutBoard(uint16_t BoardAddr, uint8_t OutputPair, uint8_t Direction, uint8_t OutputPower) {
+	//Call Back van NmraDcc library
+	//called als CV29 bit6 = false decoderadres,channel,poort,onoff (zie setup 'init')
+	//interupt mask register cleared in startmotor() en set in stop() om DCC te disabelen als motor draait. ((nog)niet in homen)
+	APP_DCC(BoardAddr, OutputPair + 1, Direction, OutputPower);
 }
-void DEK_BufCom(boolean CV) { //create command in Buffer
-	byte i = 0;
-	while (i < 6) {
-
-		if (bitRead(DEK_BufReg[i], 7) == false) {
-			DEK_BufReg[i] = 0; //clear found buffer
-
-
-			DEK_Buf0[i] = DEK_byteRX[0];
-			DEK_Buf1[i] = DEK_byteRX[1];
-			DEK_Buf2[i] = DEK_byteRX[2];
-
-			if (CV == true) {
-				DEK_BufReg[i] |= (1 << 0); //set for CV
-				DEK_Buf3[i] = DEK_byteRX[3];
-				DEK_Buf4[i] = DEK_byteRX[4];
-				DEK_Buf5[i] = DEK_byteRX[5];
-			}
-			else {
-
-				DEK_Buf3[i] = 0;
-				DEK_Buf4[i] = 0;
-				DEK_Buf5[i] = 0;
-			}
-			DEK_BufReg[i] |= (1 << 7); //claim buffer
-			i = 15;
-		}
-		i++;
-	} //close for loop
-} //close void
-void DEK_BitRX() { //new version
-	static byte countbit = 0; //counter received bits
-	static byte countbyte = 0;
-	static byte n = 0;
-
-	static byte check;
-
-	DEK_Reg |= (1 << 4);//resets and starts process if not reset in this void
-	switch (DEK_Status) {
-		//*****************************
-	case 0: //Waiting for preample 
-		if (bitRead(DEK_Reg, 3) == true) {
-			DEK_countPA++;
-			if (DEK_countPA > 12) {
-				DEK_Status = 1;
-				countbit = 0;
-				countbyte = 0;
-			}
-			bitClear(DEK_Reg, 4);
-		}
-		break;
-		//*************************
-	case 1: //Waiting for false startbit
-		if (bitRead(DEK_Reg, 3) == false) { //startbit receive
-			DEK_countPA = 0;
-			DEK_Status = 2;
-		}
-		//if Dekreg bit 3= true no action needed.
-		bitClear(DEK_Reg, 4); //correct, so resume process
-		break;
-		//*************************
-	case 2: //receiving data
-		if (bitRead(DEK_Reg, 3) == true) DEK_byteRX[countbyte] |= (1 << (7 - countbit));
-		countbit++;
-		if (countbit == 8) {
-			countbit = 0;
-			DEK_Status = 3;
-			countbyte++;
-		}
-		bitClear(DEK_Reg, 4); //correct, so resume process
-		break;
-		//*************************
-	case 3: //waiting for separating or end bit
-		if (bitRead(DEK_Reg, 3) == false) { //false bit
-			DEK_Status = 2; //next byte
-			if ((bitRead(DEK_byteRX[0], 6) == false) & (bitRead(DEK_byteRX[0], 7) == true))bitClear(DEK_Reg, 4); //correct, so resume process	
-		}
-		else { //true bit, end bit, only 3 byte and 6 byte commands handled by this dekoder
-			switch (countbyte) {
-			case 3: //Basic Accessory Decoder Packet received
-				//check error byte
-				if (DEK_byteRX[2] == (DEK_byteRX[0] ^ DEK_byteRX[1])) {
-					//aanpassingen mei 2019 voor filter eenzelfde commandoos
-					if (check != DEK_byteRX[2])DEK_BufCom(false);
-					check = DEK_byteRX[2];
-					//Serial.println(check);
-				}
-
-				break; //6
-			case 6: ///Accessory decoder configuration variable Access Instruction received (CV)
-				//in case of CV, handle only write command
-				if (bitRead(DEK_byteRX[2], 3) == true && (bitRead(DEK_byteRX[2], 2) == true)) {
-					//check errorbyte and make command
-					if (DEK_byteRX[5] == DEK_byteRX[0] ^ DEK_byteRX[1] ^ DEK_byteRX[2] ^ DEK_byteRX[3] ^ DEK_byteRX[4])DEK_BufCom(true);
-					//}
-				}
-				break;
-			} //close switch bytecount
-		}//close bittype
-		break;
-		//***************************************
-	} //switch dekstatus
-	if (bitRead(DEK_Reg, 4) == true)DEK_begin();
-}
-void DEK_DCCh() { //handles incoming DCC commands, called from loop()
-	static byte n = 0; //one buffer each passing
-	byte temp;
-	int decoder;
-	int channel = 1;
-	int adres;
-	boolean port = false;
-	boolean onoff = false;
-	int cv;
-	int value;
-
-	//translate command
-	if (bitRead(DEK_BufReg[n], 7) == true) {
-		decoder = DEK_Buf0[n] - 128;
-		if (bitRead(DEK_Buf1[n], 6) == false)decoder = decoder + 256;
-		if (bitRead(DEK_Buf1[n], 5) == false)decoder = decoder + 128;
-		if (bitRead(DEK_Buf1[n], 4) == false)decoder = decoder + 64;
-		//channel
-		if (bitRead(DEK_Buf1[n], 1) == true) channel = channel + 1;
-		if (bitRead(DEK_Buf1[n], 2) == true) channel = channel + 2;
-		//port
-		if (bitRead(DEK_Buf1[n], 0) == true)port = true;
-		//onoff
-		if (bitRead(DEK_Buf1[n], 3) == true)onoff = true;
-		//CV
-		if (bitRead(DEK_BufReg[n], 0) == true) {
-			cv = DEK_Buf3[n];
-			if (bitRead(DEK_Buf2[n], 0) == true)cv = cv + 256;
-			if (bitRead(DEK_Buf2[n], 1) == true)cv = cv + 512;
-			cv++;
-			value = DEK_Buf4[n];
-		}
-		else {
-			cv = 0;
-			value = 0;
-		}
-		COM_exe(bitRead(DEK_BufReg[n], 0), decoder, channel, port, onoff, cv, value);
-		//Show Monitor (bytes)
-		if (DEK_Monitor == true) {
-			Serial.print("buffer= ");
-			Serial.print(n);
-			Serial.print("  value:  ");
-			Serial.print(bitRead(DEK_BufReg[n], 7));
-			Serial.print(bitRead(DEK_BufReg[n], 6));
-			Serial.print(bitRead(DEK_BufReg[n], 5));
-			Serial.print(bitRead(DEK_BufReg[n], 4));
-			Serial.print(bitRead(DEK_BufReg[n], 3));
-			Serial.print(bitRead(DEK_BufReg[n], 2));
-			Serial.print(bitRead(DEK_BufReg[n], 1));
-			Serial.print(bitRead(DEK_BufReg[n], 0));
-			Serial.println("");
-
-			temp = DEK_Buf0[n];
-			Serial.print(bitRead(temp, 7));
-			Serial.print(bitRead(temp, 6));
-			Serial.print(bitRead(temp, 5));
-			Serial.print(bitRead(temp, 4));
-			Serial.print(bitRead(temp, 3));
-			Serial.print(bitRead(temp, 2));
-			Serial.print(bitRead(temp, 1));
-			Serial.print(bitRead(temp, 0));
-			Serial.println("");
-
-			temp = DEK_Buf1[n];
-			Serial.print(bitRead(temp, 7));
-			Serial.print(bitRead(temp, 6));
-			Serial.print(bitRead(temp, 5));
-			Serial.print(bitRead(temp, 4));
-			Serial.print(bitRead(temp, 3));
-			Serial.print(bitRead(temp, 2));
-			Serial.print(bitRead(temp, 1));
-			Serial.print(bitRead(temp, 0));
-			Serial.println("");
-
-			temp = DEK_Buf2[n];
-			Serial.print(bitRead(temp, 7));
-			Serial.print(bitRead(temp, 6));
-			Serial.print(bitRead(temp, 5));
-			Serial.print(bitRead(temp, 4));
-			Serial.print(bitRead(temp, 3));
-			Serial.print(bitRead(temp, 2));
-			Serial.print(bitRead(temp, 1));
-			Serial.print(bitRead(temp, 0));
-			Serial.println("");
-
-			temp = DEK_Buf3[n];
-			Serial.print(bitRead(temp, 7));
-			Serial.print(bitRead(temp, 6));
-			Serial.print(bitRead(temp, 5));
-			Serial.print(bitRead(temp, 4));
-			Serial.print(bitRead(temp, 3));
-			Serial.print(bitRead(temp, 2));
-			Serial.print(bitRead(temp, 1));
-			Serial.print(bitRead(temp, 0));
-			Serial.println("");
-
-			temp = DEK_Buf4[n];
-			Serial.print(bitRead(temp, 7));
-			Serial.print(bitRead(temp, 6));
-			Serial.print(bitRead(temp, 5));
-			Serial.print(bitRead(temp, 4));
-			Serial.print(bitRead(temp, 3));
-			Serial.print(bitRead(temp, 2));
-			Serial.print(bitRead(temp, 1));
-			Serial.print(bitRead(temp, 0));
-			Serial.println("");
-
-
-			temp = DEK_Buf5[n];
-			Serial.print(bitRead(temp, 7));
-			Serial.print(bitRead(temp, 6));
-			Serial.print(bitRead(temp, 5));
-			Serial.print(bitRead(temp, 4));
-			Serial.print(bitRead(temp, 3));
-			Serial.print(bitRead(temp, 2));
-			Serial.print(bitRead(temp, 1));
-			Serial.print(bitRead(temp, 0));
-			Serial.println("");
-			Serial.println("------");
-
-		}
-		//clear buffer
-		DEK_BufReg[n] = 0;
-		DEK_Buf0[n] = 0;
-		DEK_Buf1[n] = 0;
-		DEK_Buf2[n] = 0;
-		DEK_Buf3[n] = 0;
-		DEK_Buf4[n] = 0;
-		DEK_Buf5[n] = 0;
-	}
-	n++;
-	if (n > 5)n = 0;
-}
-void COM_exe(boolean type, int decoder, int channel, boolean port, boolean onoff, int cv, int value) {
-	//type=CV(true) or switch(false)
-	//decoder basic adres of decoder 
-	//channel assigned one of the 4 channels of the decoder (1-4)
-	//Port which port R or L
-	//onoff bit3 port on or port off
-	//cv cvnumber
-	//cv value
+void APP_DCC(int decoder, int channel, boolean port, boolean onoff) {
 	int adres;
 	adres = ((decoder - 1) * 4) + channel;
 	//Applications 
-	//APP_Monitor(type, adres, decoder, channel, port, onoff, cv, value);
-	APP_function(type, adres, decoder, channel, port, onoff, cv, value);
+	//APP_Monitor(adres, decoder, channel, port, onoff);
+	APP_function(adres, decoder, channel, port, onoff);
 }
-void APP_Monitor(boolean type, int adres, int decoder, int channel, boolean port, boolean onoff, int cv, int value) {
-	//application for DCC monitor
-	if (type == true) {
-		Serial.print("CV:   , ");
-	}
-	else {
-		Serial.print("Switch, ");
-	}
+void APP_Monitor(int adres, int decoder, int channel, boolean port, boolean onoff) {
+
 	Serial.print("Adres: ");
 	Serial.print(adres);
 	Serial.print("(");
@@ -630,44 +311,35 @@ void APP_Monitor(boolean type, int adres, int decoder, int channel, boolean port
 	Serial.print("-");
 	Serial.print(channel);
 	Serial.print("), ");
-	//cv
-	if (type == true) {
-		Serial.print("CV: ");
-		Serial.print(cv);
-		Serial.print(", waarde: ");
-		Serial.print(value);
+	if (port == true) {
+		Serial.print("A<, ");
 	}
 	else {
-		if (port == true) {
-			Serial.print("A<, ");
-		}
-		else {
-			Serial.print("R>, ");
-		}
-		if (onoff == true) {
-			Serial.print("On.");
-		}
-		else {
-			Serial.print("Off");
-		}
+		Serial.print("R>, ");
+	}
+
+	if (onoff == true) {
+		Serial.print("On.");
+	}
+	else {
+		Serial.print("Off");
 	}
 	Serial.println("");
 }
-void APP_function(boolean type, int adres, int decoder, int channel, boolean port, boolean onoff, int cv, int value) {
+void APP_function(int adres, int decoder, int channel, boolean port, boolean onoff) {
 	unsigned int dcc; //adres to be calculated?
-	if (bitRead(GPIOR2, 7) == true) {//waiting for DCC decoder adres
+
+	if (bitRead(GPIOR2, 7) == true) {//instellen adres
 		if (decoder < 255) { //possible values 0-254
 			COM_dcc = decoder;
 			LED_mode = 4;
-			COM_mode = 0;
-
-		}
+			COM_mode = 0;		}
 	}
 	else {
-		//Serial.println(COM_dcc);
 		dcc = (adres - (COM_dcc - 1) * 4) - 1;
+		
 		if (dcc < 16) {
-			if (type == false) { //switch command
+			//if (type == false) { //switch command
 				if (dcc < 8) {
 					if (port == true) {
 						SER_start(dcc, 1);
@@ -684,9 +356,9 @@ void APP_function(boolean type, int adres, int decoder, int channel, boolean por
 						SER_start(dcc - 8, 5);
 					}
 				}
-			}
-			else { //CV command
-			}
+		//	}
+		//	else { //CV command
+		//	}
 		}
 	}
 
@@ -759,9 +431,6 @@ void SER_start(byte sv, byte target) {
 		break;
 	}
 	fastled;
-	//FastLED.show();
-	//Serial.println(SER_position[servo]);
-	//Serial.println(SER_target[servo]);
 }
 void SER_stop() { //called from ISR//
 	GPIOR0 &= ~(1 << servo); //reset puls servo
@@ -924,7 +593,7 @@ void SHIFT() {
 	SHIFT0();
 	PINB |= (1 << 1); //1 en 2 verwisseld
 	PINB |= (1 << 1);
-	
+
 
 	//tijdens powerup geen switches lezen (V2.0)
 	if (SW_count > 100) {
@@ -933,7 +602,7 @@ void SHIFT() {
 	else {
 		SW_count++;
 	}
-	   	 
+
 }
 void SW_read() {
 	//reads switches
@@ -947,7 +616,7 @@ void SW_read() {
 			changed = read ^ SW_last[i];
 			if (changed > 0) {
 				SW_last[i] = read;
-
+				/*
 				Serial.println("-------");
 				Serial.print("ch: ");
 				Serial.println(changed);
@@ -957,7 +626,7 @@ void SW_read() {
 
 				Serial.print("read: ");
 				Serial.println(read);
-
+*/
 				for (byte b = 0; b < 8; b++) {
 					if (bitRead(changed, b) == true & bitRead(read, b) == false) SW_exe((i * 4) + (b));
 				}
@@ -1207,9 +876,6 @@ void SW_exe(byte sw) {
 		}
 
 	}
-	//Serial.print("switch: ");
-	//Serial.println(sw);
-	//Serial.println("");
 	fastled;
 }
 void SW_mode1(byte sw) {//handles switche in program mode 1, servo is last by push buttons controlled servo
@@ -1481,7 +1147,8 @@ void SHIFT1() {
 }
 void loop() {
 	flc++;
-	DEK_DCCh();
+	Dcc.process();
+	//DEK_DCCh();
 
 	if (bitRead(GPIOR2, 1) == true)LED_timer(); //enabled in program modes 1 and 2, GPIOR2 ???
 	//SHIFT();
@@ -1489,7 +1156,4 @@ void loop() {
 		FastLED.show();
 		GPIOR2 &= ~(1 << 2);
 	}
-
-
-
 }
